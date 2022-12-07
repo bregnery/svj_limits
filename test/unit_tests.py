@@ -1,4 +1,4 @@
-import os.path as osp, sys, argparse, fnmatch
+import os, os.path as osp, sys, argparse, fnmatch
 from pprint import pprint
 from collections import OrderedDict
 from contextlib import contextmanager
@@ -228,6 +228,38 @@ def test_datacard():
     assert dc2.syst_rgx('bsvj_bkgfitmain_*') == ['bsvj_bkgfitmain_npars2_p1', 'bsvj_bkgfitmain_npars2_p2']
     
 
+
+def test_fit_cache_mp_worker(tup):
+    i, cache_file, lock = tup
+    from fit_cache import FitCache, logger
+    logger.handlers[0].formatter._fmt = str(i) + ':' + bsvj.logger.handlers[0].formatter._fmt
+    cache = FitCache(cache_file, lock)
+    cache.write(i, i) # Use i as both the hash and the result
+
+@is_test
+def test_fit_cache_mp():
+    from fit_cache import FitCache
+    import multiprocessing as mp
+
+    cache_file = 'test_fit_cache.pickle'
+    if osp.isfile(cache_file): os.remove(cache_file)
+
+    with mp.Manager() as manager:
+        lock = manager.Lock()
+        mp_args = [ (i, cache_file, lock) for i in range(100)]
+        pool = mp.Pool(4)
+        pool.map(test_fit_cache_mp_worker, mp_args)
+        pool.close()
+        pool.join()
+
+    cache = FitCache(cache_file)
+    cache.read()
+    available_keys = set(sorted(cache.cache.keys()))
+    print(available_keys)
+    assert available_keys == set(range(100))
+
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('patterns', nargs='*', type=str, help='Select only test containing any of these substrings')
@@ -244,9 +276,3 @@ if __name__ == '__main__':
     for test_name, test_fn in _known_tests.items():
         if test_name in do_tests:
             test_fn()
-
-    # # test_roofit_get_y_values()
-    # # test_eval_expression()
-    # # test_chi2()
-    # test_combine_command()
-    # # test_datacard()

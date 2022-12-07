@@ -42,7 +42,7 @@ def cmd_exists(executable):
     return any(os.access(os.path.join(path, executable), os.X_OK) for path in os.environ["PATH"].split(os.pathsep))
 
 def name_from_combine_rootfile(rootfile, strip_obs_asimov=False):
-    name = osp.basename(rootfile).split('.',1)[0].replace('higgsCombine','')
+    name = osp.basename(rootfile).rsplit('.',3)[0].replace('higgsCombine','')
     if strip_obs_asimov:
         name = name.replace('Observed_','').replace('Asimov_','')
     return name
@@ -64,17 +64,31 @@ def namespace_to_attrdict(args):
 def get_mz(path):
     return int(re.search(r'mz(\d+)', osp.basename(path)).group(1))
 
+def get_rinv(path):
+    return int(re.search(r'rinv([\d\.]+)', osp.basename(path)).group(1))
+
 def get_bdt_str(path):
     return re.search(r'bdt([p\d]+)', osp.basename(path)).group(1)
 
 def get_bdt(path):
     return float(get_bdt_str(path).replace('p', '.'))
 
-def organize_rootfiles(rootfiles):
+def organize_rootfiles(rootfiles, split_bdt_wps=False):
     """
     Takes an unordered set of rootfiles, and splits them up logically
     by obs/asimov, mz, and bdt
     """
+
+    if split_bdt_wps:
+        bdt_wps = set(get_bdt(f) for f in rootfiles)
+        logger.info('Found the following bdt wps: %s', bdt_wps)
+        out = []
+        for bdt_wp in sorted(bdt_wps):
+            out.append(organize_rootfiles([r for r in rootfiles if get_bdt(r)==bdt_wp], False))
+        for row in out:
+            print(row)
+        return out
+
     rootfiles.sort(key=get_mz)
  
     # mzs = {get_mz(rootfile) for rootfile in rootfiles}
@@ -133,6 +147,7 @@ def muscan(args):
         parser.add_argument('rootfiles', type=str, nargs='+')
         parser.add_argument('--correctminimum', action='store_true')
         parser.add_argument('--include-dots', action='store_true')
+        parser.add_argument('--fontsize', type=int, default=18)
         args = parser.parse_args(args)
 
     fig = plt.figure(figsize=(12,12))
@@ -153,7 +168,7 @@ def muscan(args):
     ax.set_xlabel('$\mu$')
     ax.set_ylabel('$\Delta NLL$')
     apply_ranges(args, ax)
-    ax.legend()
+    ax.legend(framealpha=0., fontsize=getattr(args, 'fontsize', None))
 
     plt.savefig(args.outfile, bbox_inches='tight')
     if not(args.batch) and cmd_exists('imgcat'): os.system('imgcat ' + args.outfile)
@@ -348,7 +363,11 @@ def interpolate_95cl_limit(cls):
         # print('  {:14s}  {:14s}'.format('cl', 'mu'))
         # for c, m in zip(cl[select][order], mu[select][order]):
         #     print('  {:+14.7f}  {:+14.7f}'.format(c, m))
-        res = np.interp(.05, cl[select][order], mu[select][order])
+        try:
+            res = np.interp(.05, cl[select][order], mu[select][order])
+        except ValueError as e:
+            logger.error('Interpolation failed: %s', e)
+            res = None
         # print('Interpolation result: cl=0.05, mu={}'.format(res))
         return res
 
@@ -359,6 +378,8 @@ def interpolate_95cl_limit(cls):
     d['onesigma_up'] = interpolate(cls.s_exp[0.16])
     d['twosigma_up'] = interpolate(cls.s_exp[0.025])
     d['observed'] = interpolate(cls.s)
+    d['twosigma_success'] = (d['twosigma_down'] is not None) and (d['twosigma_up'] is not None)
+    d['onesigma_success'] = (d['onesigma_down'] is not None) and (d['onesigma_up'] is not None)
     return d
 
 
@@ -401,9 +422,12 @@ def cls(args):
     
     # Limit points
     s = 45
-    ax.scatter([limit.twosigma_down, limit.twosigma_up], [.05, .05], c='xkcd:dark yellow', s=s)
-    ax.scatter([limit.onesigma_down, limit.onesigma_up], [.05, .05], c=cms_green, s=s)
-    ax.scatter([limit.expected, limit.observed], [.05, .05], c='black', s=s)
+    if limit.twosigma_success:
+        ax.scatter([limit.twosigma_down, limit.twosigma_up], [.05, .05], c='xkcd:dark yellow', s=s)
+    if limit.onesigma_success:
+        ax.scatter([limit.onesigma_down, limit.onesigma_up], [.05, .05], c=cms_green, s=s)
+    if limit.expected is not None: ax.scatter([limit.expected], [.05], c='black', s=s)
+    if limit.observed is not None: ax.scatter([limit.observed], [.05], c='black', s=s)
 
     ax.legend()
     ax.set_xlim(0.)
@@ -435,17 +459,13 @@ def brazil(args):
         assert mz == get_mz(asimov_rootfile)
         obs = bsvj.get_arrays(obs_rootfile)
         asimov = bsvj.get_arrays(asimov_rootfile)
-        try:
-            cls = get_cls(obs, asimov)
-            limit = interpolate_95cl_limit(cls)
-            points.append(bsvj.AttrDict(
-                mz = mz,
-                limit = limit,
-                cls = cls
-                ))
-        except Exception:
-            bsvj.logger.error('Error for mz {}:'.format(mz))
-            traceback.print_exc()
+        cls = get_cls(obs, asimov)
+        limit = interpolate_95cl_limit(cls)
+        points.append(bsvj.AttrDict(
+            mz = mz,
+            limit = limit,
+            cls = cls
+            ))
 
     print(
         '{:<5s} {:>8s} {:>8s} {:>8s} {:>8s} {:>8s} | {:>8s}'
@@ -459,39 +479,54 @@ def brazil(args):
             'obs'
             )
         )
+
+    def format(nr, w=8):
+        if nr is not None:
+            return '{:+{w}.3f}'.format(nr, w=w)
+        else:
+            return '{:>{w}s}'.format('err', w=w)
+        
     for p in points:
         print(
-            '{:<5.0f} {:+8.3f} {:+8.3f} {:+8.3f} {:+8.3f} {:+8.3f} | {:+8.3f}'
+            '{:<5.0f} {} {} {} {} {} | {}'
             .format(
                 p.mz,
-                p.limit.twosigma_down,
-                p.limit.onesigma_down,
-                p.limit.expected,
-                p.limit.onesigma_up,
-                p.limit.twosigma_up,
-                p.limit.observed
+                format(p.limit.twosigma_down),
+                format(p.limit.onesigma_down),
+                format(p.limit.expected),
+                format(p.limit.onesigma_up),
+                format(p.limit.twosigma_up),
+                format(p.limit.observed)
                 )
             )
 
     fig = plt.figure(figsize=(12,10))
     ax = fig.gca()
     
-    mzs = [p.mz for p in points]
 
     ax.fill_between(
-        mzs,
-        [p.limit.twosigma_down for p in points],
-        [p.limit.twosigma_up for p in points],
+        [p.mz for p in points if p.limit.twosigma_success],
+        [p.limit.twosigma_down for p in points if p.limit.twosigma_success],
+        [p.limit.twosigma_up for p in points if p.limit.twosigma_success],
         color=cms_yellow
         )
     ax.fill_between(
-        mzs,
-        [p.limit.onesigma_down for p in points],
-        [p.limit.onesigma_up for p in points],
+        [p.mz for p in points if p.limit.onesigma_success],
+        [p.limit.onesigma_down for p in points if p.limit.onesigma_success],
+        [p.limit.onesigma_up for p in points if p.limit.onesigma_success],
         color=cms_green
-        )    
-    ax.plot(mzs, [p.limit.expected for p in points], c='black', linestyle='--', label='Exp')
-    ax.plot(mzs, [p.limit.observed for p in points], c='black', linestyle='-', label='Obs')
+        )
+
+    ax.plot(
+        [p.mz for p in points if p.limit.expected is not None],
+        [p.limit.expected for p in points if p.limit.expected is not None],
+        c='black', linestyle='--', label='Exp'
+        )
+    ax.plot(
+        [p.mz for p in points if p.limit.observed is not None],
+        [p.limit.observed for p in points if p.limit.observed is not None],
+        c='black', linestyle='-', label='Obs'
+        )
 
     ax.set_xlabel(r'$m_{Z\prime}$ (GeV)')
     ax.set_ylabel(r'$\mu$')
@@ -511,47 +546,48 @@ def allplots(args):
         parser.add_argument('rootfiles', type=str, nargs='+')
         args = parser.parse_args(args)
 
-    bdt_str = get_bdt_str(args.rootfiles[0])
-    outdir = strftime('plots_%b%d/{}'.format(bdt_str))
-    if not osp.isdir(outdir): os.makedirs(outdir)
-
     d = namespace_to_attrdict(args)
     d.batch = True
 
-    for rootfile in args.rootfiles:
-        mtdist(bsvj.AttrDict(
+    for obs_rootfiles, asimov_rootfiles in organize_rootfiles(args.rootfiles, split_bdt_wps=True):
+        bdt_str = get_bdt_str(obs_rootfiles[0])
+        logger.info('Making plots for bdt working point ' + bdt_str)
+
+        outdir = strftime('plots_%b%d/{}'.format(bdt_str))
+        if not osp.isdir(outdir): os.makedirs(outdir)
+
+        for rootfile in obs_rootfiles+asimov_rootfiles:
+            mtdist(bsvj.AttrDict(
+                d,
+                rootfile=rootfile,
+                outfile=osp.join(outdir, 'mtdist_{}.png'.format(name_from_combine_rootfile(rootfile)))
+                ))
+
+        for obs_rootfile, asimov_rootfile in zip(obs_rootfiles, asimov_rootfiles):
+            cls(bsvj.AttrDict(
+                d,
+                observed=obs_rootfile,
+                asimov=asimov_rootfile,
+                outfile=osp.join(outdir, 'cls_{}.png'.format(name_from_combine_rootfile(obs_rootfile, True))),
+                xmax=1.5
+                ))
+
+        muscan(bsvj.AttrDict(
             d,
-            rootfile=rootfile,
-            outfile=osp.join(outdir, 'mtdist_{}.png'.format(name_from_combine_rootfile(rootfile)))
+            rootfiles=obs_rootfiles,
+            xmin=-1., xmax=1., ymax=10.,
+            outfile=osp.join(outdir, 'muscan_obs.png'),
+            correctminimum=False, include_dots=False
+            ))
+        muscan(bsvj.AttrDict(
+            d,
+            rootfiles=asimov_rootfiles,
+            xmin=-1., xmax=1., ymax=10.,
+            outfile=osp.join(outdir, 'muscan_asimov.png'),
+            correctminimum=False, include_dots=False
             ))
 
-    obs_rootfiles, asimov_rootfiles = organize_rootfiles(args.rootfiles)
-
-    for obs_rootfile, asimov_rootfile in zip(obs_rootfiles, asimov_rootfiles):
-        cls(bsvj.AttrDict(
-            d,
-            observed=obs_rootfile,
-            asimov=asimov_rootfile,
-            outfile=osp.join(outdir, 'cls_{}.png'.format(name_from_combine_rootfile(obs_rootfile, True))),
-            xmax=1.5
-            ))
-
-    muscan(bsvj.AttrDict(
-        d,
-        rootfiles=obs_rootfiles,
-        xmin=-1., xmax=1., ymax=10.,
-        outfile=osp.join(outdir, 'muscan_obs.png'),
-        correctminimum=False, include_dots=False
-        ))
-    muscan(bsvj.AttrDict(
-        d,
-        rootfiles=asimov_rootfiles,
-        xmin=-1., xmax=1., ymax=10.,
-        outfile=osp.join(outdir, 'muscan_asimov.png'),
-        correctminimum=False, include_dots=False
-        ))
-
-    brazil(bsvj.AttrDict(d, outfile=osp.join(outdir, 'brazil.png')))
+        brazil(bsvj.AttrDict(d, rootfiles=obs_rootfiles+asimov_rootfiles, outfile=osp.join(outdir, 'brazil.png')))
 
 
 
