@@ -285,6 +285,7 @@ def eval_expression(expression, pars):
     # Plug parameters in local scope
     par_dict = {'PARAMETER'+str(i) : p for i, p in enumerate(pars)}
     locals().update(par_dict)
+    # logger.warning('Evaluating expr:\n%s\nwith parameters:\n%s', expression, par_dict)
     try:
         return eval(expression)
     except NameError:
@@ -604,6 +605,30 @@ def rebuild_rpsbp(pdf):
         )
 
 
+def trigeff_expression(year=2018, max_fit_range=800.):
+    """
+    Returns a TFormula-style expression that represents the trigger
+    efficiency as a function of MT.
+
+    The formula contains a switch based on `max_fit_range`: evaluating
+    beyond `max_fit_range` will return 1. only.
+    (This is needed because the fit is unstable under extrapolation)
+    """
+    import requests
+    parameters = np.array(requests.get(
+        'https://raw.githubusercontent.com/boostedsvj/triggerstudy/main/bkg/bkg_trigeff_fit_{}.txt'
+        .format(year)).json())
+    expr = sigmoid(poly1d(parameters))
+    return '({0})*(@0<{1}) + (@0>={1})'.format(expr, max_fit_range)
+
+def poly1d(parameters, mt_par='@0'):
+    degree = len(parameters)
+    return '+'.join([ '{}*pow({},{})'.format(p, mt_par, degree-i-1) for i, p in enumerate(parameters)])
+
+def sigmoid(expr):
+    return '1./(1.+exp(-({})))'.format(expr)
+
+
 def pdf_expression(pdf_type, npars, mt_scale='1000'):
     # Function from Theorists, combo testing, sequence E, 1, 11, 12, 22
     # model NM has N params on 1-x and M params on x. exponents are (p_i + p_{i+1} * log(x))
@@ -719,9 +744,12 @@ class PDF(object):
         return y / (y.sum() if y.sum()!=0. else 1.)
 
 
-def pdf_factory(pdf_type, n_pars, mt, bkg_th1, name=None, mt_scale='1000'):
+def pdf_factory(pdf_type, n_pars, mt, bkg_th1, name=None, mt_scale='1000', trigeff=None):
     """
-    Main factory entry point to generate a single RooParametricShapeBinPDF on a TH1
+    Main factory entry point to generate a single RooParametricShapeBinPDF on a TH1.
+
+    If `trigeff` equals 2016, 2017, or 2018, the bkg trigger efficiency as a 
+    function of mT_AK15_subl is prefixed to the expression.
     """
     if pdf_type not in {'main', 'alt'}: raise Exception('Unknown pdf_type %s' % pdf_type)
     if name is None: name = uid()
@@ -730,6 +758,9 @@ def pdf_factory(pdf_type, n_pars, mt, bkg_th1, name=None, mt_scale='1000'):
         .format(name, pdf_type, n_pars, mt.GetName(), bkg_th1.GetName())
         )
     expression = pdf_expression(pdf_type, n_pars, mt_scale)
+    if trigeff in [2016, 2017, 2018]:
+        logger.info('Adding trigger efficiency formula to expression')
+        expression = '({})*({})'.format(trigeff_expression(trigeff), expression)
     parameters = pdf_parameters(pdf_type, n_pars, name)
     logger.info(
         'Expression: {}; Parameter names: {}'
@@ -759,13 +790,13 @@ def pdf_factory(pdf_type, n_pars, mt, bkg_th1, name=None, mt_scale='1000'):
     return pdf
 
 
-def pdfs_factory(pdf_type, mt, bkg_th1, name=None, mt_scale='1000'):
+def pdfs_factory(pdf_type, mt, bkg_th1, name=None, mt_scale='1000', trigeff=None):
     """
     Like pdf_factory, but returns a list for all available n_pars
     """
     if name is None: name = uid()
     all_n_pars = [2, 3, 4, 5] if pdf_type == 'main' else [1, 2, 3, 4]
-    return [ pdf_factory(pdf_type, n_pars, mt, bkg_th1, name+'_npars'+str(n_pars), mt_scale) for n_pars in all_n_pars]
+    return [ pdf_factory(pdf_type, n_pars, mt, bkg_th1, name+'_npars'+str(n_pars), mt_scale, trigeff=trigeff) for n_pars in all_n_pars]
 
 
 def to_list(rooarglist):
@@ -1063,7 +1094,12 @@ def do_fisher_test(mt, data, pdfs, a_crit=.07):
 # _______________________________________________________________________
 # For combine
 
-def gen_datacard(jsonfile, bdtcut, signal, lock=None, injectsignal=False, tag=None, mt_min=180., mt_max=720.):
+def gen_datacard(
+    jsonfile, bdtcut, signal,
+    lock=None, injectsignal=False,
+    tag=None, mt_min=180., mt_max=720.,
+    trigeff=None,
+    ):
     mz = signal['mz']
     rinv = signal['rinv']
 
@@ -1077,8 +1113,8 @@ def gen_datacard(jsonfile, bdtcut, signal, lock=None, injectsignal=False, tag=No
     data_datahist = ROOT.RooDataHist("data_obs", "Data", ROOT.RooArgList(mt), bkg_th1, 1.)
 
     pdfs_dict = {
-        'main' : pdfs_factory('main', mt, bkg_th1, name='bsvj_bkgfitmain'),
-        'alt' : pdfs_factory('alt', mt, bkg_th1, name='bsvj_bkgfitalt'),
+        'main' : pdfs_factory('main', mt, bkg_th1, name='bsvj_bkgfitmain', trigeff=trigeff),
+        'alt' : pdfs_factory('alt', mt, bkg_th1, name='bsvj_bkgfitalt', trigeff=trigeff),
         }
     winner_pdfs = []
 

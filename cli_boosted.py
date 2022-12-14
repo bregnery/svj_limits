@@ -173,6 +173,7 @@ def gen_datacards_mp():
     parser.add_argument('--tag', type=str, help='string suffix to outdir')
     parser.add_argument('--minmt', type=float, default=180.)
     parser.add_argument('--maxmt', type=float, default=720.)
+    parser.add_argument('--trigeff', type=int, default=None, choices=[2016, 2017, 2018])
     args = parser.parse_args()
 
     input = bsvj.InputData(args.jsonfile)
@@ -196,7 +197,7 @@ def gen_datacards_mp():
     bsvj.logger.info('Running %s combinations', len(combinations))
 
     if len(combinations) == 1:
-        bsvj.gen_datacard(args.jsonfile, *combinations[0])
+        bsvj.gen_datacard(args.jsonfile, *combinations[0], trigeff=args.trigeff)
     else:
         import multiprocessing as mp
         with mp.Manager() as manager:

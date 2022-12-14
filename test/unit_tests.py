@@ -1,3 +1,4 @@
+from __future__ import print_function
 import os, os.path as osp, sys, argparse, fnmatch
 from pprint import pprint
 from collections import OrderedDict
@@ -258,6 +259,28 @@ def test_fit_cache_mp():
     print(available_keys)
     assert available_keys == set(range(100))
 
+
+@is_test
+def test_poly1d():
+    import requests
+    parameters = np.array(
+        requests.get(
+            'https://raw.githubusercontent.com/boostedsvj/triggerstudy/main/bkg/bkg_trigeff_fit_2018.txt'
+            ).json()
+        )
+    x = np.array([0., 200., 500., 800., 2000.])
+    # Evaluate with numpy
+    poly = np.poly1d(parameters)
+    fit = lambda x: np.where(x<800., 1./(1.+np.exp(-poly(x))), 1.)
+    y_np = fit(x)
+    # Evaluate the RooFit formula
+    expr = bsvj.sigmoid(bsvj.poly1d(parameters))
+    expr = '({0})*(@0<800.) + (@0>=800.)'.format(expr)
+    y_eval = bsvj.eval_expression(expr, [x])
+    # Should be mostly the same
+    bsvj.logger.info('Evaluation with numpy: %s', y_np)
+    bsvj.logger.info('Evaluation with formula: %s', y_eval)
+    np.testing.assert_array_almost_equal(y_np, y_eval, decimal=3)
 
 
 if __name__ == '__main__':

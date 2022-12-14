@@ -602,6 +602,7 @@ def bkgfit(args):
         parser.add_argument('bdtcut', type=float)
         parser.add_argument('pdftype', type=str, choices=['main', 'alt'])
         parser.add_argument('--log', action='store_true')
+        parser.add_argument('--trigeff', type=int, default=None, choices=[2016, 2017, 2018])
         args = parser.parse_args(args)
 
     input = bsvj.InputData(args.jsonfile)
@@ -616,7 +617,7 @@ def bkgfit(args):
 
     data_datahist = ROOT.RooDataHist("data_obs", "Data", ROOT.RooArgList(mt), bkg_th1, 1.)
 
-    pdfs = bsvj.pdfs_factory(args.pdftype, mt, bkg_th1, name=args.pdftype)
+    pdfs = bsvj.pdfs_factory(args.pdftype, mt, bkg_th1, name=args.pdftype, trigeff=args.trigeff)
     for pdf in pdfs: pdf.res = bsvj.fit(pdf)
 
     bsvj.plot_fits(pdfs, [p.res for p in pdfs], data_datahist, 'qp_' + args.pdftype + '.pdf')
