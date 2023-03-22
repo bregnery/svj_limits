@@ -569,7 +569,7 @@ def allplots(args):
                 observed=obs_rootfile,
                 asimov=asimov_rootfile,
                 outfile=osp.join(outdir, 'cls_{}.png'.format(name_from_combine_rootfile(obs_rootfile, True))),
-                xmax=1.5
+                xmax=.5
                 ))
 
         muscan(bsvj.AttrDict(
@@ -613,15 +613,25 @@ def bkgfit(args):
     bin_centers = .5*(input.mt_array[:-1]+input.mt_array[1:])
     bin_width = input.mt[1] - input.mt[0]
     bkg_hist = input.bkg_hist(args.bdtcut)
+
+    if args.trigeff:
+        import requests
+        parameters = np.array(requests.get('https://raw.githubusercontent.com/boostedsvj/triggerstudy/main/bkg/bkg_trigeff_fit_2018.txt').json())
+        poly = np.poly1d(parameters)
+        f_trig_eff = lambda x: np.where(x<1000., 1./(1.+np.exp(-poly(x))), 1.)
+        binning = np.array(bkg_hist.binning)
+        mt_bin_centers = .5*(binning[:-1]+binning[1:])
+        bkg_hist.vals *= f_trig_eff(mt_bin_centers)
+        logger.info('Adjusted bkg histogram for trigger eff')
+
     bkg_th1 = input.bkg_th1('bkg', args.bdtcut)
 
     data_datahist = ROOT.RooDataHist("data_obs", "Data", ROOT.RooArgList(mt), bkg_th1, 1.)
 
-    pdfs = bsvj.pdfs_factory(args.pdftype, mt, bkg_th1, name=args.pdftype, trigeff=args.trigeff)
+    pdfs = bsvj.pdfs_factory(args.pdftype, mt, bkg_th1, name=args.pdftype, trigeff=None)
     for pdf in pdfs: pdf.res = bsvj.fit(pdf)
 
-    bsvj.plot_fits(pdfs, [p.res for p in pdfs], data_datahist, 'qp_' + args.pdftype + '.pdf')
-
+    # bsvj.plot_fits(pdfs, [p.res for p in pdfs], data_datahist, 'qp_' + args.pdftype + '.pdf')
 
     # Make sure pdfs are really fitted
     pdf = pdfs[0]

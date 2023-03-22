@@ -605,7 +605,7 @@ def rebuild_rpsbp(pdf):
         )
 
 
-def trigeff_expression(year=2018, max_fit_range=800.):
+def trigeff_expression(year=2018, max_fit_range=1000.):
     """
     Returns a TFormula-style expression that represents the trigger
     efficiency as a function of MT.
@@ -760,7 +760,7 @@ def pdf_factory(pdf_type, n_pars, mt, bkg_th1, name=None, mt_scale='1000', trige
     expression = pdf_expression(pdf_type, n_pars, mt_scale)
     if trigeff in [2016, 2017, 2018]:
         logger.info('Adding trigger efficiency formula to expression')
-        expression = '({})*({})'.format(trigeff_expression(trigeff), expression)
+        expression = '({})/({})'.format(expression, trigeff_expression(trigeff))
     parameters = pdf_parameters(pdf_type, n_pars, name)
     logger.info(
         'Expression: {}; Parameter names: {}'

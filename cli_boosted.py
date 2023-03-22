@@ -212,7 +212,8 @@ def gen_datacards_mp():
                         injectsignal = args.injectsignal,
                         mt_min = args.minmt,
                         mt_max = args.maxmt,
-                        tag = args.tag
+                        tag = args.tag,
+                        trigeff=args.trigeff
                         )
                     ])
             pool.map(gen_datacard_worker, mp_args)
@@ -324,7 +325,7 @@ def likelihood_scan_multiple():
     parser.add_argument('-v', '--verbosity', type=int, default=0)
     parser.add_argument('-n', '--npoints', type=int, default=201)
     parser.add_argument('--minmu', type=float, default=-.5)
-    parser.add_argument('--maxmu', type=float, default=-.5)
+    parser.add_argument('--maxmu', type=float, default=.5)
     parser.add_argument('-o', '--outdir', type=str, default=strftime('scans_%b%d'))
     args = parser.parse_args()
 

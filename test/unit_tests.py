@@ -271,11 +271,11 @@ def test_poly1d():
     x = np.array([0., 200., 500., 800., 2000.])
     # Evaluate with numpy
     poly = np.poly1d(parameters)
-    fit = lambda x: np.where(x<800., 1./(1.+np.exp(-poly(x))), 1.)
+    fit = lambda x: np.where(x<1000., 1./(1.+np.exp(-poly(x))), 1.)
     y_np = fit(x)
     # Evaluate the RooFit formula
     expr = bsvj.sigmoid(bsvj.poly1d(parameters))
-    expr = '({0})*(@0<800.) + (@0>=800.)'.format(expr)
+    expr = '({0})*(@0<1000.) + (@0>=1000.)'.format(expr)
     y_eval = bsvj.eval_expression(expr, [x])
     # Should be mostly the same
     bsvj.logger.info('Evaluation with numpy: %s', y_np)
