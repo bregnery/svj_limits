@@ -2,7 +2,8 @@
 
 ## Setup 
 
-1. Follow the `combine` instructions: https://cms-analysis.github.io/HiggsAnalysis-CombinedLimit/#setting-up-the-environment-and-installation . Current results are using CC7 release `CMSSW_10_2_X`, tag v8.2.0.
+1. Follow the `combine` instructions: https://cms-analysis.github.io/HiggsAnalysis-CombinedLimit/#setting-up-the-environment-and-installation .
+Current results are using release `CMSSW_11_3_4`, tag v9.1.0.
 
 2. Clone this repository:
 
@@ -11,6 +12,16 @@ cd $CMSSW_BASE/src
 git clone git@github.com:boostedsvj/svj_limits.git boosted/svj_limits
 cd boosted/svj_limits
 ```
+
+The code currently assumes Python 3.
+For convenience, you can do:
+
+```bash
+alias python=python3
+```
+
+The commands below assume you are using this alias; if you're not, replace `python` with `python3`.
+
 
 ## Generating the datacards
 
@@ -27,14 +38,14 @@ python cli_boosted.py gen_datacards_mp histograms_Mar14.json
 For all BDT working points and all signals, do simply:
 
 ```bash
-python cli_boosted.py likelihood_scan_multiple dc_Dec07/*.txt
-python cli_boosted.py likelihood_scan_multiple dc_Dec07/*.txt --asimov
+python cli_boosted.py likelihood_scan dc_Dec07/*.txt
+python cli_boosted.py likelihood_scan dc_Dec07/*.txt --asimov
 ```
 
-Selecting BDT working points and particular signals is easily done via wildcard patterns to select the right datacards:
+Selecting BDT working points and particular signals is easily done via wildcard patterns to select the right datacards, e.g.:
 
 ```bash
-python cli_boosted.py likelihood_scan_multiple dc_Dec07_minmt300/dc_mz*rinv0.3*bdt0p{0,3,5}*.txt --asimov --minmu -.5 --maxmu .5 -n 100
+python cli_boosted.py likelihood_scan dc_Dec07_minmt300/dc_mz*rinv0.3*bdt0p{0,3,5}*.txt --asimov --minmu -.5 --maxmu .5 -n 100
 ```
 
 Note also the options `--minmu` and `--maxmu` which handle the range of the signal parameter to scan, and the option `-n` which controls the number of points in the range.
@@ -54,7 +65,7 @@ python quick_plot.py allplots scans_Dec07/*.root
 ΔNNL as a function of mu:
 
 ```bash
-python quick_plot.py muscan scans_Dec07/*bdt0p3*.root
+python quick_plot.py muscan scans_Dec07/*bdt0p3*Scan*.root
 ```
 
 ![muscan](example_plots/muscan.png)
@@ -63,11 +74,16 @@ python quick_plot.py muscan scans_Dec07/*bdt0p3*.root
 MT histogram, with bkg-only fit and and sig+bkg fit:
 
 ```bash
-python quick_plot.py mtdist scans_Dec07/higgsCombineObserved_dc_mz450_rinv0.3_bdt0p300.MultiDimFit.mH120.root
+python quick_plot.py mtdist scans_Dec07/higgsCombineObserved_dc_mz450_rinv0.3_bdt0p300Bestfit.MultiDimFit.mH120.root
 ```
+
+Note you should use the `Bestfit`-tagged file, not `Scan`.
+Apparently, the single snapshot stored in the `Scan` files is _not_ the best fit.
+
 
 ![mtdist](example_plots/mtdist.png)
 
+_Warning: Below here, readme outdated; need to check_
 
 CLS:
 

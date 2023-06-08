@@ -11,6 +11,13 @@ import itertools, re, logging, os, os.path as osp, copy, subprocess, json
 from collections import OrderedDict
 from time import strftime
 
+PY3 = sys.version_info.major == 3
+
+def encode(s):
+    """For python 2/3 compatibility"""
+    return s.encode() if PY3 else s
+
+
 import ROOT # type:ignore
 ROOT.TH1.SetDefaultSumw2()
 ROOT.TH1.AddDirectory(False)
@@ -446,15 +453,15 @@ def make_fit_hash(expression, th1, init_vals=None, tag=None, **minimize_kwargs):
     def add_floats_to_hash(floats):
         for number in floats:
             s = '{:.5f}'.format(number)
-            m.update(s)
-    m.update(expression)
+            m.update(encode(s))
+    m.update(encode(expression))
     hist = th1_to_hist(th1)
     add_floats_to_hash(hist.binning)
     add_floats_to_hash(hist.vals)
     if init_vals is not None: add_floats_to_hash(init_vals)
-    if 'tol' in minimize_kwargs: m.update('{:.3f}'.format(minimize_kwargs['tol']))
-    if 'method' in minimize_kwargs: m.update(minimize_kwargs['method'])
-    if tag: m.update(tag)
+    if 'tol' in minimize_kwargs: m.update(encode('{:.3f}'.format(minimize_kwargs['tol'])))
+    if 'method' in minimize_kwargs: m.update(encode(minimize_kwargs['method']))
+    if tag: m.update(encode(tag))
     return m.hexdigest()
 
 
@@ -564,7 +571,7 @@ def fit_scipy_robust(expression, histogram, cache='auto'):
     logger.info('Robust scipy fit of expression %s to %s', expression, histogram)
     fit_hash = make_fit_hash(expression, histogram, tag='robust')
 
-    if cache is 'auto':
+    if cache == 'auto':
         from fit_cache import FitCache # type: ignore
         cache = FitCache()
 
@@ -1103,7 +1110,7 @@ def get_rss_viaframe(mt, pdf, data, norm=None, return_n_bins=False):
     data.getRange(mt, xmin, xmax)
 
     n_bins = 0
-    for i in xrange(0, hist.GetN()): # type:ignore
+    for i in range(0, hist.GetN()): # type:ignore
         x, y = hist.GetX()[i], hist.GetY()[i]
         res_y = residuals.GetY()[i]
         left  = x - hist.GetErrorXlow(i)
@@ -1156,7 +1163,7 @@ def do_fisher_test(mt, data, pdfs, a_crit=.07):
             'Winner is pdf {} with {} parameters'
             .format(winner, pdfs[winner].n_pars)
             )
-        table = [[''] + range(1,len(pdfs))]
+        table = [[''] + list(range(1,len(pdfs)))]
         for i in range(len(pdfs)-1):
             table.append(
                 [i] + ['{:6.4f}'.format(cl_vals[(i,j)]) for j in range(i+1,len(pdfs))]
@@ -1384,7 +1391,7 @@ def parse_dc(dc):
 
 def transpose(l):
     '''Transposes a list of lists'''
-    return map(list, zip(*l))
+    return list(map(list, zip(*l)))
 
 
 def tabelize(data):
