@@ -2,7 +2,7 @@
 Scripts using building blocks in boosted_fits.py to create datacards
 """
 
-import argparse, inspect, os, os.path as osp, re, json, itertools
+import argparse, inspect, os, os.path as osp, re, json, itertools, sys
 from pprint import pprint
 from time import strftime, sleep
 from copy import copy
@@ -14,17 +14,10 @@ import boosted_fits as bsvj
 import ROOT # type: ignore
 ROOT.RooMsgService.instance().setSilentMode(True)
 
-_scripts = {}
-def is_script(fn):
-    _scripts[fn.__name__] = fn
-    return fn
-
-# _______________________________________________________________________
+scripter = bsvj.Scripter()
 
 
-
-
-@is_script
+@scripter
 def plot_scipy_fits():
     parser = argparse.ArgumentParser(inspect.stack()[0][3])
     parser.add_argument('rootfile', type=str)
@@ -86,7 +79,7 @@ def plot_scipy_fits():
                 do_plot(tdir_name)
 
 
-@is_script
+@scripter
 def plot_roofit_fits():
     parser = argparse.ArgumentParser(inspect.stack()[0][3])
     parser.add_argument('rootfile', type=str)
@@ -161,7 +154,7 @@ def gen_datacard_worker(args):
     bsvj.gen_datacard(*args, **kwargs)
 
 
-@is_script
+@scripter
 def gen_datacards_mp():
     parser = argparse.ArgumentParser(this_fn_name())
     parser.add_argument('jsonfile', type=str)
@@ -220,7 +213,7 @@ def gen_datacards_mp():
             pool.close()
 
 
-@is_script
+@scripter
 def simple_test_fit():
     """
     Runs a simple AsymptoticLimits fit on a datacard, without many options
@@ -243,105 +236,175 @@ def simple_test_fit():
     bsvj.run_combine_command(cmd, args.chdir)
 
 
-@is_script
-def multidimfit():
-    """
-    Runs a single MultiDimFit on a datacard
-    """
-    parser = argparse.ArgumentParser(inspect.stack()[0][3])
-    parser.add_argument('datacard', type=str)
-    parser.add_argument('-c', '--chdir', type=str, default=None)
-    parser.add_argument('-a', '--asimov', action='store_true')
-    args = parser.parse_args()
+# @scripter
+# def multidimfit():
+#     """
+#     Runs a single MultiDimFit on a datacard
+#     """
+#     parser = argparse.ArgumentParser(inspect.stack()[0][3])
+#     parser.add_argument('datacard', type=str)
+#     parser.add_argument('pdf', type=str, choices=['main', 'alt'])
+#     parser.add_argument('-c', '--chdir', type=str, default=None)
+#     parser.add_argument('-a', '--asimov', action='store_true')
+#     args, other_args = parser.parse_known_args()
 
-    dc = bsvj.read_dc(args.datacard)
+#     dc = bsvj.read_dc(args.datacard)
 
-    cmd = bsvj.CombineCommand(args.datacard, 'MultiDimFit')
-    cmd.args.add('--saveWorkspace')
-    cmd.args.add('--saveNLL')
-    if args.asimov:
-        cmd.kwargs['-t'] = '-1'
-        cmd.args.add('--toysFreq')
-    cmd.set_parameter('pdf_index', 1)
+#     cmd = bsvj.CombineCommand(args.datacard, 'MultiDimFit', raw=' '.join(other_args))
+#     cmd.args.add('--saveWorkspace')
+#     cmd.args.add('--saveNLL')
+#     if args.asimov:
+#         cmd.kwargs['-t'] = '-1'
+#         cmd.args.add('--toysFrequentist')
+#     cmd.set_parameter('pdf_index', 1 if args.pdf=='alt' else 0)
     
-    cmd.freeze_parameters.append('pdf_index')
-    cmd.freeze_parameters.extend(dc.syst_rgx('bsvj_bkgfitmain_npars*'))
+#     pdf_pars = dc.syst_rgx('bsvj_bkgfit%s_npars*' % args.pdf)
+#     other_pdf = 'main' if args.pdf == 'alt' else 'alt'
+#     other_pdf_pars = dc.syst_rgx('bsvj_bkgfit%s_npars*' % other_pdf)
 
-    cmd.redefine_signal_pois.append('r')
-    cmd.kwargs['--X-rtd'] = 'REMOVE_CONSTANT_ZERO_POINT=1'
-    cmd.track_parameters.extend(['r'])
+#     cmd.freeze_parameters.append('pdf_index')
+#     cmd.freeze_parameters.extend(pdf_pars)
 
-    bsvj.run_combine_command(cmd, args.chdir)
+#     cmd.redefine_signal_pois.append('r')
+#     cmd.kwargs['--X-rtd'] = 'REMOVE_CONSTANT_ZERO_POINT=1'
+#     cmd.track_parameters.extend(['r'] + other_pdf_pars)
+
+#     bsvj.run_combine_command(cmd, args.chdir)
 
 
-@is_script
-def likelihood_scan():
+
+
+def make_bestfit_and_scan_commands(txtfile, args=None):
+    if args is None: args = sys.argv[1:]
+    with bsvj.set_args(sys.argv[:1] + args):
+        dc = bsvj.Datacard.from_txt(txtfile)
+        cmd = bsvj.CombineCommand(dc)
+        cmd = bsvj.apply_combine_args(cmd)
+        cmd.name += osp.basename(dc.filename).replace('.txt','')
+        scan = bsvj.scan(cmd)
+        bestfit = bsvj.bestfit(cmd)
+        scan.raw = ' '.join(sys.argv[1:])
+        bestfit.raw = ' '.join(sys.argv[1:])
+        scan.name += 'Scan'
+        bestfit.name += 'Bestfit'
+    return bestfit, scan
+
+
+@scripter
+def bestfit():
+    txtfile = bsvj.pull_arg('datacard', type=str).datacard
+    dc = bsvj.Datacard.from_txt(txtfile)
+    cmd = bsvj.CombineCommand(dc)
+    cmd = bsvj.apply_combine_args(cmd)
+    cmd = bsvj.bestfit(cmd)
+    cmd.raw = ' '.join(sys.argv[1:])
+    cmd.name += 'Bestfit'
+    bsvj.run_combine_command(cmd, logfile=cmd.logfile)
+
+
+@scripter
+def likelihood_scan(args=None):
     """
     Runs a likelihood scan on a datacard
     """
-    parser = argparse.ArgumentParser(inspect.stack()[0][3])
-    parser.add_argument('datacard', type=str)
-    parser.add_argument('-c', '--chdir', type=str, default=None)
-    parser.add_argument('-a', '--asimov', action='store_true')
-    parser.add_argument('--injectsignal', action='store_true')
-    parser.add_argument('-n', '--npoints', type=int, default=51)
-    parser.add_argument('-r', '--range', type=float, default=[-.7, .7], nargs=2)
-    parser.add_argument('-v', '--verbosity', type=int, default=0)
-    parser.add_argument('--pdf', type=str, default='main', choices=['main', 'alt'])
-    args = parser.parse_args()
-    cmd = bsvj.likelihood_scan_factory(
-        args.datacard, args.range[0], args.range[1], args.npoints,
-        args.verbosity, args.asimov, pdf_type=args.pdf
-        )
-    if args.injectsignal: cmd.kwargs['-n'] += 'InjectedSig'
-    bsvj.run_combine_command(cmd, args.chdir)
+    if args is None: args = sys.argv
+    with bsvj.set_args(args):
+
+        print(sys.argv)
+
+        outdir = bsvj.pull_arg('-o', '--outdir', type=str).outdir
+        txtfile = bsvj.pull_arg('datacard', type=str).datacard
+        bestfit, scan = make_bestfit_and_scan_commands(txtfile)
+
+        if outdir and not osp.isdir(outdir): os.makedirs(outdir)
+
+        for cmd in [bestfit, scan]:
+            bsvj.run_combine_command(cmd, logfile=cmd.logfile)
+            if outdir is not None:
+                if osp.isfile(cmd.logfile):
+                    os.rename(cmd.logfile, osp.join(outdir, osp.basename(cmd.logfile)))
+                else:
+                    bsvj.logger.error('No logfile %s', cmd.logfile)
+                if osp.isfile(cmd.outfile):
+                    os.rename(cmd.outfile, osp.join(outdir, osp.basename(cmd.outfile)))
+                else:
+                    bsvj.logger.error('No outfile %s', cmd.outfile)
+            else:
+                bsvj.logger.error('No outdir specified')
 
 
-def likelihood_scan_multiple_worker(input):
+@scripter
+def likelihood_scan_mp():
     """
-    Worker function for likelihood_scan_multiple multiprocessing
+    Like likelihood_scan, but accepts multiple datacards. 
     """
-    datacard, args = input
-    cmd = bsvj.likelihood_scan_factory(
-        datacard, args.minmu, args.maxmu, args.npoints,
-        args.verbosity, args.asimov
-        )
-    cmd.name = cmd.name + '_' + osp.basename(datacard).replace('.txt', '')
-    output = bsvj.run_combine_command(cmd)
-    # Stageout
-    output_file = osp.join(args.outdir, cmd.outfile.replace('.root','') + '.out')
-    with open(output_file, 'w') as f:
-        f.write(''.join(output))
-    if osp.isfile(cmd.outfile): os.rename(cmd.outfile, osp.join(args.outdir, cmd.outfile))
-    bsvj.logger.info('Finished scan for %s', datacard)
+    datacards = bsvj.pull_arg('datacards', type=str, nargs='+').datacards
+    outdir = bsvj.pull_arg('-o', '--outdir', type=str, default=strftime('scans_%b%d')).outdir
+    if not osp.isdir(outdir): os.makedirs(outdir)
 
-
-@is_script
-def likelihood_scan_multiple():
-    parser = argparse.ArgumentParser(inspect.stack()[0][3])
-    parser.add_argument('datacards', type=str, nargs='+')
-    parser.add_argument('-c', '--chdir', type=str, default=None)
-    parser.add_argument('-a', '--asimov', action='store_true')
-    parser.add_argument('-v', '--verbosity', type=int, default=0)
-    parser.add_argument('-n', '--npoints', type=int, default=201)
-    parser.add_argument('--minmu', type=float, default=-.5)
-    parser.add_argument('--maxmu', type=float, default=.5)
-    parser.add_argument('-o', '--outdir', type=str, default=strftime('scans_%b%d'))
-    args = parser.parse_args()
-
-    if not osp.isdir(args.outdir): os.makedirs(args.outdir)
-
-    data = [ (d, args) for d in args.datacards ]
+    # Copy sys.argv per job, setting first argument to the datacard
+    args = sys.argv[:]
+    args.insert(1, datacards[0])
+    args.extend(['--outdir', outdir])
+    jobs = []
+    for txtfile in datacards:
+        args[1] = txtfile
+        jobs.append(args[:])
 
     import multiprocessing
     p = multiprocessing.Pool(16)
-    p.map(likelihood_scan_multiple_worker, data)
+    p.map(likelihood_scan, jobs)
     p.close()
     p.join()
     bsvj.logger.info('Finished pool')
 
 
-@is_script
+
+# def likelihood_scan_multiple_worker(input):
+#     """
+#     Worker function for likelihood_scan_multiple multiprocessing
+#     """
+#     datacard, args, other_args = input
+#     cmd = bsvj.likelihood_scan_factory(
+#         datacard, args.minmu, args.maxmu, args.npoints,
+#         args.verbosity, args.asimov,
+#         raw = ' '.join(other_args)
+#         )
+#     cmd.name = cmd.name + '_' + osp.basename(datacard).replace('.txt', '')
+#     output = bsvj.run_combine_command(cmd)
+#     # Stageout
+#     output_file = osp.join(args.outdir, cmd.outfile.replace('.root','') + '.out')
+#     with open(output_file, 'w') as f:
+#         f.write(''.join(output))
+#     if osp.isfile(cmd.outfile): os.rename(cmd.outfile, osp.join(args.outdir, cmd.outfile))
+#     bsvj.logger.info('Finished scan for %s', datacard)
+
+
+# @scripter
+# def likelihood_scan_multiple():
+#     parser = argparse.ArgumentParser(inspect.stack()[0][3])
+#     parser.add_argument('datacards', type=str, nargs='+')
+#     parser.add_argument('-c', '--chdir', type=str, default=None)
+#     parser.add_argument('-a', '--asimov', action='store_true')
+#     parser.add_argument('-v', '--verbosity', type=int, default=0)
+#     parser.add_argument('-n', '--npoints', type=int, default=201)
+#     parser.add_argument('--minmu', type=float, default=-.5)
+#     parser.add_argument('--maxmu', type=float, default=.5)
+#     parser.add_argument('-o', '--outdir', type=str, default=strftime('scans_%b%d'))
+#     args, other_args = parser.parse_known_args()
+
+#     if not osp.isdir(args.outdir): os.makedirs(args.outdir)
+#     data = [ (d, args, other_args) for d in args.datacards ]
+
+#     import multiprocessing
+#     p = multiprocessing.Pool(16)
+#     p.map(likelihood_scan_multiple_worker, data)
+#     p.close()
+#     p.join()
+#     bsvj.logger.info('Finished pool')
+
+
+@scripter
 def printws():
     """
     Prints a workspace contents
@@ -356,13 +419,7 @@ def printws():
     return ws
 
 
-
 if __name__ == '__main__':
-    import argparse, sys
-    parser = argparse.ArgumentParser()
-    parser.add_argument('script', type=str, choices=list(_scripts.keys()))
-    parser.add_argument('-v', '--verbose', action='store_true')
-    global_args, other_args = parser.parse_known_args()
-    sys.argv = [sys.argv[0]] + other_args
-    if global_args.verbose: bsvj.debug()
-    r = _scripts[global_args.script]()
+    bsvj.debug(bsvj.pull_arg('-d', '--debug', action='store_true').debug)
+    bsvj.drymode(bsvj.pull_arg('--dry', action='store_true').dry)
+    scripter.run()

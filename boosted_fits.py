@@ -2,7 +2,7 @@
 Building blocks to create the boosted SVJ analysis datacards
 """
 
-import uuid
+import uuid, sys, time, argparse
 from contextlib import contextmanager
 from array import array
 from math import sqrt
@@ -47,6 +47,68 @@ def debug(flag=True):
     logger.setLevel(logging.DEBUG if flag else DEFAULT_LOGGING_LEVEL)
 
 
+DRYMODE = False
+def drymode(flag=True):
+    global DRYMODE
+    DRYMODE = bool(flag)
+
+
+def pull_arg(*args, **kwargs):
+    """
+    Pulls specific arguments out of sys.argv.
+    """
+    parser = argparse.ArgumentParser()
+    parser.add_argument(*args, **kwargs)
+    args, other_args = parser.parse_known_args()
+    sys.argv = [sys.argv[0]] + other_args
+    return args
+
+
+def read_arg(*args, **kwargs):
+    """
+    Reads specific arguments from sys.argv but does not modify sys.argv
+    """
+    parser = argparse.ArgumentParser()
+    parser.add_argument(*args, **kwargs)
+    args, _ = parser.parse_known_args()
+    return args
+
+
+@contextmanager
+def set_args(args):
+    _old_sys_args = sys.argv
+    try:
+        sys.argv = args
+        yield args
+    finally:
+        sys.argv = _old_sys_args
+
+
+@contextmanager
+def timeit(msg):
+    try:
+        logger.info(msg)
+        sys.stdout.flush()
+        t0 = time.time()
+        yield None
+    finally:
+        logger.info('  Done, took %s secs', time.time() - t0)
+
+
+class Scripter:
+    def __init__(self):
+        self.scripts = {}
+
+    def __call__(self, fn):
+        self.scripts[fn.__name__] = fn
+        return fn
+
+    def run(self):
+        script = pull_arg('script', choices=list(self.scripts.keys())).script
+        logger.info('Running %s', script)
+        self.scripts[script]()
+
+
 def mpl_fontsizes(small=14, medium=18, large=24):
     import matplotlib.pyplot as plt # type:ignore
     plt.rc('font', size=small)          # controls default text sizes
@@ -56,6 +118,18 @@ def mpl_fontsizes(small=14, medium=18, large=24):
     plt.rc('ytick', labelsize=small)    # fontsize of the tick labels
     plt.rc('legend', fontsize=small)    # legend fontsize
     plt.rc('figure', titlesize=large)   # fontsize of the figure title
+
+
+@contextmanager
+def quick_ax(figsize=(12,12), outfile='temp.png'):
+    import matplotlib.pyplot as plt #type: ignore
+    try:
+        fig = plt.figure(figsize=figsize)
+        ax = fig.gca()
+        yield ax
+    finally:
+        plt.savefig(outfile, bbox_inches='tight')
+        os.system('imgcat ' + outfile)
 
 
 def uid():
@@ -469,7 +543,7 @@ def single_fit_scipy(expression, histogram, init_vals=None, cache=None, **minimi
     # Save some extra information in the result
     res.x_init = np.array(init_vals)
     res.expression = expression
-    res.hash = hash
+    res.hash = fit_hash
     # Set approximate uncertainties; see https://stackoverflow.com/a/53489234
     # Assume ftol ~ function value
     # try:
@@ -590,19 +664,19 @@ def get_mt_from_th1(histogram, name=None):
     return mt
 
 
-def rebuild_rpsbp(pdf):
-    name = uid()
-    def remake_parameter(parameter):
-        variable = ROOT.RooRealVar(
-            name + '_' + parameter.GetName(), parameter.GetTitle(),
-            1., parameter.getMin(), parameter.getMax()
-            )
-        object_keeper.add(variable)
-        return variable
-    return build_rpsbp(
-        name, pdf.expression, pdf.mt,
-        [remake_parameter(p) for p in pdf.parameters], pdf.th1
-        )
+# def rebuild_rpsbp(pdf):
+#     name = uid()
+#     def remake_parameter(parameter):
+#         variable = ROOT.RooRealVar(
+#             name + '_' + parameter.GetName(), parameter.GetTitle(),
+#             1., parameter.getMin(), parameter.getMax()
+#             )
+#         object_keeper.add(variable)
+#         return variable
+#     return build_rpsbp(
+#         name, pdf.expression, pdf.mt,
+#         [remake_parameter(p) for p in pdf.parameters], pdf.th1
+#         )
 
 
 def trigeff_expression(year=2018, max_fit_range=1000.):
@@ -831,66 +905,66 @@ def set_pdf_to_fitresult(pdf, res):
         return res.x
 
 
-def plot_pdf_for_various_fitresults(pdf, fit_results, data_obs, outfile='test.pdf', labels=None, title=''):
-    """
-    Plots the fitted bkg pdfs on top of the data histogram.
-    """
-    # First find the mT Roo variable in one of the pdfs
-    mt = pdf.parameters[0]
-    mt_min = mt.getMin()
-    mt_max = mt.getMax()
+# def plot_pdf_for_various_fitresults(pdf, fit_results, data_obs, outfile='test.pdf', labels=None, title=''):
+#     """
+#     Plots the fitted bkg pdfs on top of the data histogram.
+#     """
+#     # First find the mT Roo variable in one of the pdfs
+#     mt = pdf.parameters[0]
+#     mt_min = mt.getMin()
+#     mt_max = mt.getMax()
 
-    # Open the frame
-    xframe = mt.frame(ROOT.RooFit.Title(title))
-    c1 = ROOT.TCanvas(str(uuid.uuid4()), '', 1000, 800)
-    c1.cd()
+#     # Open the frame
+#     xframe = mt.frame(ROOT.RooFit.Title(title))
+#     c1 = ROOT.TCanvas(str(uuid.uuid4()), '', 1000, 800)
+#     c1.cd()
 
-    # Plot the data histogram
-    data_obs.plotOn(xframe, ROOT.RooFit.Name("data_obs"))
-    norm = data_obs.sumEntries()
+#     # Plot the data histogram
+#     data_obs.plotOn(xframe, ROOT.RooFit.Name("data_obs"))
+#     norm = data_obs.sumEntries()
 
-    # Plot the pdfs (its parameters already at fit result)
-    colors = [ROOT.kPink+6, ROOT.kBlue-4, ROOT.kRed-4, ROOT.kGreen+1]
+#     # Plot the pdfs (its parameters already at fit result)
+#     colors = [ROOT.kPink+6, ROOT.kBlue-4, ROOT.kRed-4, ROOT.kGreen+1]
 
-    py_chi2 = build_chi2(pdf.expression, data_obs.createHistogram(mt.GetName()))
+#     py_chi2 = build_chi2(pdf.expression, data_obs.createHistogram(mt.GetName()))
 
-    base_pdf = pdf
-    for i, res in enumerate(fit_results):
-        pdf = rebuild_rpsbp(base_pdf)
-        vals = set_pdf_to_fitresult(pdf, res)
-        logger.info(
-            'i=%s; Manual chi2=%.5f, chi2_via_frame=%.5f',
-            i, py_chi2(vals), get_chi2_viaframe(mt, pdf.pdf, data_obs, len(vals))[1]
-            )
-        pdf.plotOn(
-            xframe,
-            ROOT.RooFit.Normalization(norm, ROOT.RooAbsReal.NumEvent),
-            ROOT.RooFit.LineColor(colors[i]),
-            # ROOT.RooFit.FillColor(ROOT.kOrange),
-            ROOT.RooFit.FillStyle(1001),
-            ROOT.RooFit.DrawOption("L"),
-            ROOT.RooFit.Name(pdf.GetName()),
-            ROOT.RooFit.Range("Full")
-            )
-        chi2 = xframe.chiSquare(pdf.GetName(), "data_obs", len(pdf.parameters)-1)
-        par_value_str = ', '.join(['p{}={:.3f}'.format(iv, v) for iv, v in enumerate(vals)])
-        label = labels[i] if labels else 'fit'+str(i)
-        txt = ROOT.TText(
-            .13, 0.13+i*.045,
-            "{}, chi2={:.4f}, {}".format(label, chi2, par_value_str)
-            )
-        txt.SetNDC()
-        txt.SetTextSize(0.03)
-        txt.SetTextColor(colors[i])
-        xframe.addObject(txt) 
-        txt.Draw()
+#     base_pdf = pdf
+#     for i, res in enumerate(fit_results):
+#         pdf = rebuild_rpsbp(base_pdf)
+#         vals = set_pdf_to_fitresult(pdf, res)
+#         logger.info(
+#             'i=%s; Manual chi2=%.5f, chi2_via_frame=%.5f',
+#             i, py_chi2(vals), get_chi2_viaframe(mt, pdf.pdf, data_obs, len(vals))[1]
+#             )
+#         pdf.plotOn(
+#             xframe,
+#             ROOT.RooFit.Normalization(norm, ROOT.RooAbsReal.NumEvent),
+#             ROOT.RooFit.LineColor(colors[i]),
+#             # ROOT.RooFit.FillColor(ROOT.kOrange),
+#             ROOT.RooFit.FillStyle(1001),
+#             ROOT.RooFit.DrawOption("L"),
+#             ROOT.RooFit.Name(pdf.GetName()),
+#             ROOT.RooFit.Range("Full")
+#             )
+#         chi2 = xframe.chiSquare(pdf.GetName(), "data_obs", len(pdf.parameters)-1)
+#         par_value_str = ', '.join(['p{}={:.3f}'.format(iv, v) for iv, v in enumerate(vals)])
+#         label = labels[i] if labels else 'fit'+str(i)
+#         txt = ROOT.TText(
+#             .13, 0.13+i*.045,
+#             "{}, chi2={:.4f}, {}".format(label, chi2, par_value_str)
+#             )
+#         txt.SetNDC()
+#         txt.SetTextSize(0.03)
+#         txt.SetTextColor(colors[i])
+#         xframe.addObject(txt) 
+#         txt.Draw()
 
-    xframe.SetMinimum(0.002)
-    xframe.Draw()
-    c1.SetLogy()
-    c1.SaveAs(outfile)
-    if outfile.endswith('.pdf'): c1.SaveAs(outfile.replace('.pdf', '.png'))
-    del xframe, c1
+#     xframe.SetMinimum(0.002)
+#     xframe.Draw()
+#     c1.SetLogy()
+#     c1.SaveAs(outfile)
+#     if outfile.endswith('.pdf'): c1.SaveAs(outfile.replace('.pdf', '.png'))
+#     del xframe, c1
 
 
 def plot_fits(pdfs, fit_results, data_obs, outfile='test.pdf'):
@@ -1129,7 +1203,7 @@ def gen_datacard(
         # plot_fits(pdfs, ress, data_datahist, pdf_type + '.pdf')
 
     systs = [
-        ['lumi', 'lnN', 1.016, '-'],
+        ['lumi', 'lnN', 1.026, '-'],
         # Place holders
         ['trigger', 'lnN', 1.02, '-'],
         ['pdf', 'lnN', 1.05, '-'],
@@ -1166,6 +1240,11 @@ def gen_datacard(
 
 
 class Datacard:
+
+    @classmethod
+    def from_txt(cls, txtfile):
+        return read_dc(txtfile)
+
     def __init__(self):
         self.shapes = [] # Expects len-4 or len-5 iterables as elements
         self.channels = [] # Expects len-2 iterables as elements, (name, rate)
@@ -1198,7 +1277,9 @@ def read_dc(datacard):
     Returns a Datacard object based on the txt stored in the passed path
     """
     with open(datacard, 'r') as f:
-        return read_dc_txt(f.read())
+        dc = read_dc_txt(f.read())
+    dc.filename = datacard
+    return dc
 
 
 def read_dc_txt(txt):
@@ -1408,15 +1489,16 @@ class CombineCommand(object):
     comma_separated_arg_map = { camel_to_snake(v.strip('-')) : v for v in comma_separated_args }
     comma_separated_arg_map['redefine_signal_pois'] = '--redefineSignalPOIs'
 
-    def __init__(self, dc=None, method='MultiDimFit', args=None, kwargs=None):
+    def __init__(self, dc=None, method='MultiDimFit', args=None, kwargs=None, raw=None):
         self.dc = dc
         self.method = method
         self.args = set() if args is None else args
         self.kwargs = OrderedDict()
         if kwargs: self.kwargs.update(kwargs)
-        for key in self.comma_separated_arg_map: setattr(self, key, [])
+        for key in self.comma_separated_arg_map: setattr(self, key, set())
         self.parameters = OrderedDict()
         self.parameter_ranges = OrderedDict()
+        self.raw = raw
 
     def get_name_key(self):
         """
@@ -1438,8 +1520,25 @@ class CombineCommand(object):
         self.kwargs[self.get_name_key()] = val
 
     @property
+    def seed(self):
+        if '-s' in self.kwargs:
+            return self.kwargs['-s']
+        elif self.kwargs.get('-t', -1) >= 0:
+            return 123456
+        return None
+
+    @property
     def outfile(self):
-        return 'higgsCombine{0}.{1}.mH120.root'.format(self.name, self.method)
+        out = 'higgsCombine{0}.{1}.mH120.root'.format(self.name, self.method)
+        if self.seed is not None:
+            print(self.seed)
+            out = out.replace('.root', '.{}.root'.format(self.seed))
+            print(out)
+        return out
+
+    @property
+    def logfile(self):
+        return self.outfile.replace('.root','') + '.log'
 
     def copy(self):
         return copy.deepcopy(self)
@@ -1465,14 +1564,14 @@ class CombineCommand(object):
         command = ['combine']
         command.append('-M ' + self.method)
         if not self.dc: raise Exception('self.dc must be a valid path')
-        command.append(self.dc)
+        command.append(self.dc.filename)
         command.extend(list(self.args))
         command.extend([k+' '+str(v) for k, v in self.kwargs.items()])
 
         for attr, command_str in self.comma_separated_arg_map.items():
             values = getattr(self, attr)
             if not values: continue
-            command.append(command_str + ' ' + ','.join(values))
+            command.append(command_str + ' ' + ','.join(list(sorted(values))))
         
         if self.parameters:
             strs = ['{0}={1}'.format(k, v) for k, v in self.parameters.items()]
@@ -1482,20 +1581,93 @@ class CombineCommand(object):
             strs = ['{0}={1},{2}'.format(parname, *ranges) for parname, ranges in self.parameter_ranges.items()]
             command.append('--setParameterRanges ' + ':'.join(strs))
 
+        if self.raw: command.append(self.raw)
+
         return command
+
+
+def apply_combine_args(cmd):
+    """
+    Takes a CombineCommand, and reads arguments 
+    """
+    cmd = cmd.copy()
+    pdf = pull_arg('--pdf', type=str, choices=['main', 'alt'], default='main').pdf
+    logger.info('Using pdf %s', pdf)
+    cmd.set_parameter('pdf_index', {'main':0, 'alt':1}[pdf])
+    pdf_pars = cmd.dc.syst_rgx('bsvj_bkgfit%s_npars*' % pdf)
+    other_pdf = {'main':'alt', 'alt':'main'}[pdf]
+    other_pdf_pars = cmd.dc.syst_rgx('bsvj_bkgfit%s_npars*' % other_pdf)
+    cmd.freeze_parameters.add('pdf_index')
+    cmd.freeze_parameters.update(other_pdf_pars)
+    cmd.track_parameters.update(['r'] + pdf_pars)
+
+    asimov = pull_arg('-a', '--asimov', action='store_true').asimov
+    if asimov:
+        logger.info('Doing asimov')
+        cmd.kwargs['-t'] = -1
+        cmd.args.add('--toysFrequentist')
+        cmd.name = 'Asimov'
+    else:
+        cmd.name = 'Observed'
+
+    toyseed = pull_arg('-t', type=int).t
+    if toyseed:
+        if asimov: raise Exception('asimov and -t >-1 are exclusive options')
+        cmd.kwargs['-t'] = toyseed
+        cmd.args.add('--toysFrequentist')
+
+    seed = pull_arg('-s', '--seed', type=int).seed
+    if seed is not None: cmd.kwargs['-s'] = seed
+    cmd.kwargs['-v'] = pull_arg('-v', '--verbosity', type=int, default=0).verbosity
+    
+    return cmd
+
+
+def bestfit(cmd):
+    """
+    Takes a CombineComand, and applies options on it to turn it into
+    MultiDimFit best-fit command
+    """
+    cmd = cmd.copy()
+    cmd.method = 'MultiDimFit'
+    cmd.args.add('--saveWorkspace')
+    cmd.args.add('--saveNLL')    
+    cmd.redefine_signal_pois.add('r')
+    cmd.kwargs['--X-rtd'] = 'REMOVE_CONSTANT_ZERO_POINT=1'
+    # Possibly delete some settings too
+    cmd.kwargs.pop('--algo', None)
+    return cmd
+
+
+def scan(cmd):
+    """
+    Takes a CombineComand, and applies options on it to turn it into
+    scan over r
+    """
+    cmd = bestfit(cmd)
+    cmd.kwargs['--algo'] = 'grid'
+    cmd.kwargs['--alignEdges'] = 1
+    rmin, rmax = pull_arg('-r', '--range', type=float, default=[-1., 2.], nargs=2).range
+    cmd.add_range('r', rmin, rmax)
+    cmd.track_parameters.add('r')
+    cmd.kwargs['--points'] = pull_arg('-n', type=int, default=100).n
+    return cmd
+
 
 
 def likelihood_scan_factory(
     datacard,
     rmin=0., rmax=2., n=40,
     verbosity=0, asimov=False,
-    pdf_type='alt'
+    pdf_type='alt',
+    n_toys=None,
+    raw=None,
     ):
     """
     Returns a good CombineCommand template for a likelihood scan 
     """
     dc = read_dc(datacard)
-    cmd = CombineCommand(datacard, 'MultiDimFit')
+    cmd = CombineCommand(datacard, 'MultiDimFit', raw=raw)
 
     cmd.redefine_signal_pois.append('r')
     cmd.add_range('r', rmin, rmax)
@@ -1506,23 +1678,28 @@ def likelihood_scan_factory(
     cmd.kwargs['--algo'] = 'grid'
     cmd.kwargs['--points'] = n
     cmd.kwargs['--X-rtd'] = 'REMOVE_CONSTANT_ZERO_POINT=1'
-    cmd.kwargs['--alignEdges'] = 1
     cmd.kwargs['-v'] = verbosity
 
     if asimov:
+        if n_toys is not None: raise Exception('asimov and n_toys are exclusive')
         cmd.kwargs['-t'] = '-1'
         cmd.args.add('--toysFreq')
         cmd.kwargs['-n'] = 'Asimov'
     else:
         cmd.kwargs['-n'] = 'Observed'
 
+    if n_toys is not None: cmd.kwargs['-t'] = str(n_toys)
+
     cmd.freeze_parameters.append('pdf_index')
+    cmd.track_parameters.append('n_exp_final_binbsvj_proc_roomultipdf')
     if pdf_type == 'alt':
         cmd.set_parameter('pdf_index', 1)
         cmd.freeze_parameters.extend(dc.syst_rgx('bsvj_bkgfitmain_*'))
+        cmd.track_parameters.extend(dc.syst_rgx('bsvj_bkgfitalt_*'))
     elif pdf_type == 'main':
         cmd.set_parameter('pdf_index', 0)
         cmd.freeze_parameters.extend(dc.syst_rgx('bsvj_bkgfitalt_*'))
+        cmd.track_parameters.extend(dc.syst_rgx('bsvj_bkgfitmain_*'))
     else:
         raise Exception('Unknown pdf_type {}'.format(pdf_type))
 
@@ -1548,6 +1725,10 @@ def switchdir(other_dir):
 
 
 def run_command(cmd, chdir=None):
+    if DRYMODE:
+        logger.warning('DRYMODE: ' + cmd)
+        return '<drymode - no stdout>'
+
     with switchdir(chdir):
         logger.warning('Issuing command: ' + cmd)
         process = subprocess.Popen(
@@ -1573,13 +1754,17 @@ def run_command(cmd, chdir=None):
         return output
 
 
-def run_combine_command(cmd, chdir=None):
+def run_combine_command(cmd, chdir=None, logfile=None):
     if chdir:
         # Fix datacard to be an absolute path first
         cmd = cmd.copy()
         cmd.dc = osp.abspath(cmd.dc)
     logger.info('Running {0}'.format(cmd))
-    return run_command(cmd.str, chdir)
+    out = run_command(cmd.str, chdir)
+    if logfile is not None:
+        with open(logfile, 'w') as f:
+            f.write(''.join(out))
+    return out
 
 
 # _______________________________________________________________________
@@ -1588,11 +1773,12 @@ def run_combine_command(cmd, chdir=None):
 @contextmanager
 def open_root(path, mode='READ'):
     '''Context manager that takes care of closing the ROOT file properly'''
+    tfile = None
     try:
         tfile = ROOT.TFile.Open(path, mode)
         yield tfile
     finally:
-        tfile.Close()
+        if tfile is not None: tfile.Close()
 
 
 class ROOTObjectKeeper:
@@ -1694,11 +1880,13 @@ def roodataset_values(data, varname='mt'):
     """
     x = []
     y = []
+    dy = []
     for i in range(data.numEntries()):
         s = data.get(i)
         x.append(s[varname].getVal())
         y.append(data.weight())
-    return np.array(x), np.array(y)
+        dy.append(data.weightError())
+    return np.array(x), np.array(y), np.array(dy)
 
 
 def pdf_values(pdf, x_vals, varname='mt'):
