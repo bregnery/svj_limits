@@ -33,6 +33,7 @@ Then:
 python cli_boosted.py gen_datacards_mp histograms_Mar14.json
 ```
 
+
 ## Running the likelihood scans
 
 For all BDT working points and all signals, do simply:
@@ -50,6 +51,20 @@ python cli_boosted.py likelihood_scan dc_Dec07_minmt300/dc_mz*rinv0.3*bdt0p{0,3,
 
 Note also the options `--minmu` and `--maxmu` which handle the range of the signal parameter to scan, and the option `-n` which controls the number of points in the range.
 
+
+## Bias study
+
+Generate toys:
+
+```
+python cli_boosted.py gentoys dc_Jun08/dc_mz350_rinv0.3_bdt0p300.txt -t 5 --expectSignal 0 -s 1001
+```
+
+Fit the toys:
+
+```
+python cli_boosted.py fittoys dc_Jun08/dc_mz350_rinv0.3_bdt0p300.txt --toysFile toys_Jul25/higgsCombineObserveddc_mz350_rinv0.3_bdt0p300.GenerateOnly.mH120.1001.root --expectSignal 0
+```
 
 
 ## Plotting

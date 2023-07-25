@@ -303,6 +303,89 @@ def bestfit():
 
 
 @scripter
+def gentoys():
+    # cmdGen="combine ${DC_NAME_ALL}
+    #   -M GenerateOnly
+    #   -n ${genName}
+    #   -t ${nTOYS}
+    #   --toysFrequentist
+    #   --saveToys
+    #   --expectSignal ${expSig}
+    #   --bypassFrequentistFit
+    #   --saveWorkspace
+    #   -s 123456
+    #   -v
+    #   -1
+    #   --setParameters $SetArgGenAll
+    #   --freezeParameters $FrzArgGenAll"
+    datacards = bsvj.pull_arg('datacards', type=str, nargs='+').datacards
+    outdir = bsvj.pull_arg('-o', '--outdir', type=str, default=strftime('toys_%b%d')).outdir
+    if not osp.isdir(outdir): os.makedirs(outdir)
+
+    for dc_file in datacards:
+        dc = bsvj.Datacard.from_txt(dc_file)
+        cmd = bsvj.CombineCommand(dc)
+        cmd = bsvj.apply_combine_args(cmd)
+        cmd.name += osp.basename(dc.filename).replace('.txt','')
+        cmd = bsvj.gen_toys(cmd)
+        cmd.raw = ' '.join(sys.argv[1:])
+
+        assert '-t' in cmd.kwargs
+        assert '-s' in cmd.kwargs
+        assert '--expectSignal' in cmd.kwargs
+
+        bsvj.run_combine_command(cmd)
+        os.rename(cmd.outfile, osp.join(outdir, osp.basename(cmd.outfile)))
+
+
+@scripter
+def fittoys():
+    # cmdFit="combine ${DC_NAME_ALL}
+    #    -M FitDiagnostics
+    #    -n ${fitName}
+    #    --toysFile higgsCombine${genName}.GenerateOnly.mH120.123456.root
+    #    -t ${nTOYS}
+    #    -v
+    #    -1
+    #    --toysFrequentist
+    #    --saveToys
+    #    --expectSignal ${expSig}
+    #    --rMin ${rMin}
+    #    --rMax ${rMax}
+    #    --savePredictionsPerToy
+    #    --bypassFrequentistFit
+    #    --X-rtd MINIMIZER_MaxCalls=100000
+    #    --setParameters $SetArgFitAll
+    #    --freezeParameters $FrzArgFitAll
+    #    --trackParameters $TrkArgFitAll"
+
+    datacards = bsvj.pull_arg('datacards', type=str, nargs='+').datacards
+    outdir = bsvj.pull_arg('-o', '--outdir', type=str, default=strftime('toyfits_%b%d')).outdir
+    if not osp.isdir(outdir): os.makedirs(outdir)
+
+    for dc_file in datacards:
+        dc = bsvj.Datacard.from_txt(dc_file)
+        cmd = bsvj.CombineCommand(dc)
+        cmd = bsvj.apply_combine_args(cmd)
+        cmd.name += osp.basename(dc.filename).replace('.txt','')
+        cmd = bsvj.fit_toys(cmd)
+        cmd.raw = ' '.join(sys.argv[1:])
+
+        assert '-t' in cmd.kwargs
+        assert '--expectSignal' in cmd.kwargs
+
+        bsvj.run_combine_command(cmd)
+        os.rename(cmd.outfile, osp.join(outdir, osp.basename(cmd.outfile)))
+
+        fit_diag_file = 'fitDiagnostics{}.root'.format(cmd.name)
+        os.rename(fit_diag_file, osp.join(outdir, fit_diag_file))
+
+
+
+
+
+
+@scripter
 def likelihood_scan(args=None):
     """
     Runs a likelihood scan on a datacard

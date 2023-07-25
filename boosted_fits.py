@@ -1627,6 +1627,9 @@ def apply_combine_args(cmd):
     if seed is not None: cmd.kwargs['-s'] = seed
     cmd.kwargs['-v'] = pull_arg('-v', '--verbosity', type=int, default=0).verbosity
     
+    expectSignal = pull_arg('--expectSignal', type=int).expectSignal
+    if expectSignal is not None: cmd.kwargs['--expectSignal'] = expectSignal
+
     return cmd
 
 
@@ -1660,6 +1663,59 @@ def scan(cmd):
     cmd.kwargs['--points'] = pull_arg('-n', type=int, default=100).n
     return cmd
 
+
+def gen_toys(cmd):
+    """
+    Takes a base CombineCommand, applies options to generate toys
+    """
+    cmd = cmd.copy()
+    cmd.method = 'GenerateOnly'
+    cmd.args.add('--saveToys')
+    cmd.args.add('--bypassFrequentistFit')
+    cmd.args.add('--saveWorkspace')
+    # Possibly delete some settings too
+    cmd.kwargs.pop('--algo', None)
+    cmd.track_parameters = set()
+    return cmd
+
+def fit_toys(cmd):
+    # cmdFit="combine ${DC_NAME_ALL}
+    #    -M FitDiagnostics
+    #    -n ${fitName}
+    #    --toysFile higgsCombine${genName}.GenerateOnly.mH120.123456.root
+    #    -t ${nTOYS}
+    #    -v
+    #    -1
+    #    --toysFrequentist
+    #    --saveToys
+    #    --expectSignal ${expSig}
+    #    --savePredictionsPerToy
+    #    --bypassFrequentistFit
+    #    --X-rtd MINIMIZER_MaxCalls=100000
+    # 
+    #    --setParameters $SetArgFitAll
+    #    --freezeParameters $FrzArgFitAll
+    #    --trackParameters $TrkArgFitAll"
+    #    --rMin ${rMin}
+    #    --rMax ${rMax}
+
+    cmd = cmd.copy()
+    cmd.method = 'FitDiagnostics'
+    cmd.kwargs.pop('--algo', None)
+    cmd.args.add('--toysFrequentist')
+    cmd.args.add('--saveToys')
+    cmd.args.add('--savePredictionsPerToy')
+    cmd.args.add('--bypassFrequentistFit')
+    cmd.kwargs['--X-rtd'] = 'MINIMIZER_MaxCalls=100000'
+
+    toysFile = pull_arg('--toysFile', required=True, type=str).toysFile
+    cmd.kwargs['--toysFile'] = toysFile
+
+    if not '-t' in cmd.kwargs:
+        with open_root(toysFile) as f:
+            cmd.kwargs['-t'] = f.Get('limit').GetEntries()
+
+    return cmd
 
 
 def likelihood_scan_factory(
