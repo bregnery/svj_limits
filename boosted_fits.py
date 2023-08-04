@@ -871,12 +871,13 @@ def pdf_factory(pdf_type, n_pars, mt, bkg_th1, name=None, mt_scale='1000', trige
     return pdf
 
 
-def pdfs_factory(pdf_type, mt, bkg_th1, name=None, mt_scale='1000', trigeff=None):
+def pdfs_factory(pdf_type, mt, bkg_th1, name=None, mt_scale='1000', trigeff=None, npars=None):
     """
     Like pdf_factory, but returns a list for all available n_pars
     """
     if name is None: name = uid()
     all_n_pars = [2, 3, 4, 5] if pdf_type == 'main' else [1, 2, 3, 4]
+    if npars is not None: all_n_pars = [npars]
     return [ pdf_factory(pdf_type, n_pars, mt, bkg_th1, name+'_npars'+str(n_pars), mt_scale, trigeff=trigeff) for n_pars in all_n_pars]
 
 

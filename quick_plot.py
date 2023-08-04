@@ -857,6 +857,7 @@ def bkgfit():
     fitmethod = bsvj.pull_arg('--fitmethod', type=str, choices=['scipy', 'auto'], default='auto').fitmethod
     outfile = bsvj.read_arg('-o', '--outfile', type=str, default='test.png').outfile
     mtrange = bsvj.pull_arg('--range', type=float, nargs=2).range
+    npars = bsvj.pull_arg('--npars', type=int, default=None).npars
 
     input = bsvj.InputData(jsonfile)
     if mtrange is None: mtrange = [180., 720.]
@@ -882,7 +883,7 @@ def bkgfit():
 
     data_datahist = ROOT.RooDataHist("data_obs", "Data", ROOT.RooArgList(mt), bkg_th1, 1.)
 
-    pdfs = bsvj.pdfs_factory(pdftype, mt, bkg_th1, name=pdftype, trigeff=None)
+    pdfs = bsvj.pdfs_factory(pdftype, mt, bkg_th1, name=pdftype, trigeff=None, npars=npars)
     
     for pdf in pdfs:
         if fitmethod == 'auto':
@@ -891,6 +892,9 @@ def bkgfit():
             pdf.res = bsvj.fit_scipy_robust(pdf.expression, pdf.th1, cache=None)
             # Fill in the fitted parameters
             for p, val in zip(pdf.parameters, pdf.res.x):
+                # Make sure the newly fitted value is actually in range
+                if val < p.getMin(): p.setMin(val - 0.1*abs(val))
+                if val > p.getMax(): p.setMax(val + 0.1*abs(val))
                 p.setVal(val)
 
 
@@ -910,9 +914,10 @@ def bkgfit():
     y_pdf_eval /= y_pdf_eval.sum()
     np.testing.assert_almost_equal(y_pdf_eval, pdf.evaluate(bin_centers), decimal=2)
 
-    # Do the fisher test and mark the winner pdf
-    winner = bsvj.do_fisher_test(mt, data_datahist, pdfs)
-    pdfs[winner].is_winner = True
+    if npars is None:
+        # Do the fisher test and mark the winner pdf
+        winner = bsvj.do_fisher_test(mt, data_datahist, pdfs)
+        pdfs[winner].is_winner = True
 
     bkg_hist.vals = np.array(bkg_hist.vals)
     bkg_hist.shape = bkg_hist.vals / (bkg_hist.vals.sum()*bin_width)
