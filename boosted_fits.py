@@ -479,27 +479,42 @@ def fit_roofit(pdf, data_hist=None, init_vals=None, init_ranges=None):
         if len(init_vals) != len(pdf.parameters):
             raise Exception('Expected {} values; got {}'.format(len(pdf.parameters)-1, len(init_vals)))
         for par, value in zip(pdf.parameters, init_vals):
-            old_range = max(abs(par.getMin()), abs(par.getMax()))
-            if abs(value) > old_range:
-                new_range = 1.1*abs(value)
+            left, right = par.getMin(), par.getMax()
+
+            # First check if the init_val is *outside* of the current range:
+            if value < left:
+                new_left = value - .3*abs(value)
                 logger.info(
-                    'Increasing range for {} ({}) from ({:.3f}, {:.3f}) to ({:.3f}, {:.3f})'
-                    .format(par.GetName(), par.GetTitle(), par.getMin(), par.getMax(), -new_range, new_range)
+                    f'Increasing range for {par.GetName()} on the left:'
+                    f'({left:.2f}, {right:.2f}) -> ({new_left:.2f}, {right:.2f})'
                     )
-                par.setRange(-new_range, new_range)
-            elif abs(value) / old_range < .1:
-                new_range = 1.1*abs(value)
+                par.setMin(new_left)
+            elif value > right:
+                new_right = value + .3*abs(value)
                 logger.info(
-                    'Decreasing range for {} ({}) from ({:.3f}, {:.3f}) to ({:.3f}, {:.3f})'
-                    .format(par.GetName(), par.GetTitle(), par.getMin(), par.getMax(), -new_range, new_range)
+                    f'Increasing range for {par.GetName()} on the right:'
+                    f'({left:.2f}, {right:.2f}) -> ({left:.2f}, {new_right:.2f})'
                     )
-                par.setRange(-new_range, new_range)
-            # par.setRange(value-0.01*abs(value), value+0.01*abs(value))
+                par.setMax(new_right)
+
+            # Now check if any of the ranges are needlessly large
+            if abs(value) / min(abs(left), abs(right)) < 0.1:
+                new_left = -2.*abs(value)
+                new_right = 2.*abs(value)
+                logger.info(
+                    f'Decreasing range for {par.GetName()} on both sides:'
+                    f'({left:.2f}, {right:.2f}) -> ({new_left:.2f}, {new_right:.2f})'
+                    )
+                par.setMin(new_left)
+                par.setMax(new_right)
+
+            # Once all the ranges are updated, set the actual initial value
             par.setVal(value)
             logger.info(
                 'Setting {0} ({1}) value to {2}, range is {3} to {4}'
                 .format(par.GetName(), par.GetTitle(), value, par.getMin(), par.getMax())
                 )
+            
     if init_ranges is not None:
         if len(init_ranges) != len(pdf.parameters):
             raise Exception('Expected {} values; got {}'.format(len(pdf.parameters), len(init_ranges)))
