@@ -331,6 +331,19 @@ class InputData(object):
     def sig_th1(self, name, bdt, mz, rinv=.3, mdark=10):
         return hist_to_th1(name, self.sig_hist(bdt, mz, rinv, mdark))
 
+    def systematics_hists(self, bdt, mz, rinv=.3, mdark=10):
+        for key, hist in self.d['histograms'][bdt].items():
+            if not key.startswith('SYST_'): continue
+            if (
+                hist.metadata['mz'] == mz
+                and hist.metadata['rinv'] == rinv
+                and hist.metadata['mdark'] == mdark
+                ):
+                direction = 'Up' if '_up' in hist.metadata['systname'] else 'Down'
+                systname = hist.metadata['systname'].replace('_up','').replace('_down','')
+                yield systname, direction, hist
+
+
 
 # _______________________________________________________________________
 # Model building code: Bkg fits, fisher testing, etc.
@@ -1228,14 +1241,23 @@ def gen_datacard(
     systs = [
         ['lumi', 'lnN', 1.026, '-'],
         # Place holders
-        ['trigger', 'lnN', 1.02, '-'],
-        ['pdf', 'lnN', 1.05, '-'],
-        ['mcstat', 'lnN', 1.07, '-'],
+        # ['trigger', 'lnN', 1.02, '-'],
+        # ['pdf', 'lnN', 1.05, '-'],
+        # ['mcstat', 'lnN', 1.07, '-'],
         ]
 
     sig_name = 'mz{:.0f}_rinv{:.1f}'.format(mz, rinv)
     sig_th1 = input.sig_th1(sig_name, bdtcut, mz, rinv)
     sig_datahist = ROOT.RooDataHist(sig_name, sig_name, ROOT.RooArgList(mt), sig_th1, 1.)
+
+    syst_th1s = []
+    used_systs = set()
+    for systname, direction, hist in input.systematics_hists(bdtcut, mz, rinv):
+        th1 = hist_to_th1(f'{sig_name}_{systname}{direction}', hist)
+        syst_th1s.append(th1)
+        if systname not in used_systs:
+            systs.append([systname, 'shape', 1, '-'])
+            used_systs.add(systname     )
 
     # Some checks
     # assert bkg_th1.GetNbinsX() == sig_th1.GetNbinsX()
@@ -1258,7 +1280,8 @@ def gen_datacard(
     compile_datacard_macro(
         winner_pdfs, data_datahist, sig_datahist,
         outfile,
-        systs=systs
+        systs=systs,
+        syst_th1s=syst_th1s,
         )
 
 
@@ -1446,7 +1469,7 @@ def make_multipdf(pdfs, name='roomultipdf'):
     return multipdf, norm
 
 
-def compile_datacard_macro(bkg_pdf, data_obs, sig, outfile='dc_bsvj.txt', systs=None):
+def compile_datacard_macro(bkg_pdf, data_obs, sig, outfile='dc_bsvj.txt', systs=None, syst_th1s=None):
     do_syst = systs is not None
     w = ROOT.RooWorkspace("SVJ", "workspace")
 
@@ -1467,6 +1490,11 @@ def compile_datacard_macro(bkg_pdf, data_obs, sig, outfile='dc_bsvj.txt', systs=
 
     commit(data_obs)
     commit(sig, ROOT.RooFit.Rename('sig'))
+
+    if syst_th1s is not None:
+        for th1 in syst_th1s:
+            th1.SetName(th1.GetName().replace(sig.GetName(), 'sig'))
+            commit(th1)
 
     wsfile = outfile.replace('.txt', '.root')
     dump_ws_to_file(wsfile, w)

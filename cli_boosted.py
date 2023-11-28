@@ -171,7 +171,11 @@ def gen_datacards_mp():
 
     input = bsvj.InputData(args.jsonfile)
     bdtcuts = input.d['histograms'].keys()
-    signals = [h.metadata for h in input.d['histograms']['0.100'].values() if 'mz' in h.metadata]
+
+    signals = []
+    for key, hist in input.d['histograms']['0.000'].items():
+        if 'mz' in hist.metadata and not key.startswith('SYST_'):
+            signals.append(hist.metadata)
 
     # Filter for selected bdtcuts
     if args.bdtcut:
