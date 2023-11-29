@@ -1481,11 +1481,13 @@ def compile_datacard_macro(bkg_pdf, data_obs, sig, outfile='dc_bsvj.txt', systs=
     # Bkg pdf: May be multiple
     is_multipdf = hasattr(bkg_pdf, '__len__')
     if is_multipdf:
+        mt = bkg_pdf[0].mt
         multipdf, norm = make_multipdf(bkg_pdf)
         commit(multipdf.cat)
         commit(norm)
         commit(multipdf)
     else:
+        mt = bkg_pdf.mt
         commit(bkg_pdf, ROOT.RooFit.RenameVariable(bkg_pdf.GetName(), 'bkg'))
 
     commit(data_obs)
@@ -1493,8 +1495,10 @@ def compile_datacard_macro(bkg_pdf, data_obs, sig, outfile='dc_bsvj.txt', systs=
 
     if syst_th1s is not None:
         for th1 in syst_th1s:
-            th1.SetName(th1.GetName().replace(sig.GetName(), 'sig'))
-            commit(th1)
+            # th1.SetName(th1.GetName().replace(sig.GetName(), 'sig'))
+            name = th1.GetName().replace(sig.GetName(), 'sig')
+            dh = ROOT.RooDataHist(name, name, ROOT.RooArgList(mt), th1)
+            commit(dh)
 
     wsfile = outfile.replace('.txt', '.root')
     dump_ws_to_file(wsfile, w)
