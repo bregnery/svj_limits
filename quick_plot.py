@@ -386,7 +386,7 @@ def mtdist():
 
     mu = ws.var('r').getVal()
 
-    data = ws.data('data_obs')
+    data = ws.data('data_obs')    
     _, y_data, _ = bsvj.roodataset_values(data)
     errs_data = np.sqrt(y_data)
     # errs_data = y_data
@@ -414,7 +414,12 @@ def mtdist():
     #     )
 
     sig = ws.embeddedData('shapeSig_sig_bsvj')
-    _, y_sig, _ = bsvj.roodataset_values(sig)
+    if not sig:
+        logger.warning('Could not find shapeSig_sig_bsvj, trying shapeSig_bsvj_sig_morph')
+        sig = ws.pdf('shapeSig_bsvj_sig_morph')
+        y_sig = bsvj.pdf_values(sig, mt_bin_centers)
+    else:
+        _, y_sig, _ = bsvj.roodataset_values(sig)
 
 
     bsvj.logger.info(
