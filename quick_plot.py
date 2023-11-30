@@ -373,59 +373,64 @@ def mtdist():
     mt_bin_centers = .5*(mt_binning[1:]+mt_binning[:-1])
     mt_bin_widths = mt_binning[1:] - mt_binning[:-1]
 
+    # Get the prefit background histogram
     y_bkg_init = bsvj.pdf_values(ws.pdf('shapeBkg_roomultipdf_bsvj'), mt_bin_centers)
     pdf_raw_norm_prefit = np.sum(y_bkg_init)
-    logger.warning('y_bkg_prefit: %s', y_bkg_init)
     bkg_norm_init = ws.function('n_exp_final_binbsvj_proc_roomultipdf').getVal()
     y_bkg_init *= bkg_norm_init
-    logger.warning('y_bkg_init after norm: %s', y_bkg_init)
+    logger.info(f'Prefit bkg norm = {y_bkg_init.sum():.2f}, should match with datacard')
 
-    # y_bkg_init = np.array([417445.88530677,393394.77851794,367220.71464014,340431.57494335,314050.8399294,288729.19264226,264844.58889476,242583.76624329,222004.75258088,203082.79977358,185743.02273491,169882.91882724,155387.45868466,142138.87117872,130022.72291852,118931.46187536,108766.2604223,99437.74358479,90866.00707337,82980.20065687,75717.86203919,69024.12390646,62850.87411286,57155.92012126,51902.18952197,47056.98567565,42591.30913172,38479.24998277,34697.45271791,31224.65275109,28041.28217747,25129.14116364,22471.13053263,20051.04046289,17853.38973303,15863.30959285,14066.46612453,12449.01488083,10997.58165579,9699.26345785,8541.64411008,7512.81938378,6601.42715953,5796.67877722,5088.38845541,4466.99839893,3923.59794341,3449.93578274,3038.42496939,2682.14096017,2374.81349787,2110.81358502,1885.13724379,1693.3882103,1531.762253,1397.03654641,1286.56865402,1198.31147909,1130.85354323])
+    has_systematics = not(bool(ws.embeddedData('shapeSig_sig_bsvj')))
+    logger.info(f'Datacard {"has" if has_systematics else "does not have"} systematics')
 
+    # Get the signal histogram
+    if has_systematics:
+        # Datacard with systematics
+        # The signal histogram is saved only as a pdf, and reconstructing what
+        # the signal should look like at mu=1, systs=0 is a little more complicated
+        # Get the PDF and normalization separately
+        sig = ws.pdf('shapeSig_bsvj_sig_morph')
+        norm_init = ws.function('n_exp_binbsvj_proc_sig').getVal()
+        y_sig = norm_init * bsvj.pdf_values(sig, mt_bin_centers)
+    else:
+        # Datacard without systematics: Just get the datahist
+        sig = ws.embeddedData('shapeSig_sig_bsvj')
+        y_sig = bsvj.roodataset_values(sig)[1]
+    logger.info(f'Prefit signal norm = {y_sig.sum():.2f}, should match with datacard')
+
+    # Get the data histogram
+    data = ws.data('data_obs')    
+    y_data = bsvj.roodataset_values(data)[1]
+    errs_data = np.sqrt(y_data)
+    logger.info(f'Prefit data # entries = {y_data.sum():.2f}, should match with datacard')
+
+    # __________________________________
+    # Load snapshot - everything is final fit values from this point onward
     ws.loadSnapshot('MultiDimFit')
 
+    # Best fit mu value
     mu = ws.var('r').getVal()
 
-    data = ws.data('data_obs')    
-    _, y_data, _ = bsvj.roodataset_values(data)
-    errs_data = np.sqrt(y_data)
-    # errs_data = y_data
-
-    # data_th1 = ROOT.RooAbsData.createHistogram(data, 'data_th1', mt)
-    # logger.warning('data_th1 integral: %s', data_th1.Integral())
-    # data_hist = bsvj.th1_to_hist(data_th1)
-
+    # Final-fit bkg
     bkg = ws.pdf('shapeBkg_roomultipdf_bsvj')
     y_bkg = bsvj.pdf_values(bkg, mt_bin_centers)
     logger.warning('y_bkg_postfit: %s', y_bkg)
     pdf_raw_norm_postfit = np.sum(y_bkg)
     bkg_norm = ws.function('n_exp_final_binbsvj_proc_roomultipdf').getVal()
     y_bkg *= bkg_norm
+    logger.info(f'Initial bkg norm: {bkg_norm_init:.2f}; Final bkg norm: {bkg_norm:.2f}')
 
-
-    # logger.warning(
-    #     'sum(y_bkg) prefit: {:.4f} ; sum(y_bkg) postfit: {:.4f}'
-    #     .format(pdf_raw_norm_prefit, pdf_raw_norm_postfit)
-    #     )
-
-    # logger.warning(
-    #     'bkg_norm prefit: {:.4f} ; bkg_norm postfit: {:.4f}'
-    #     .format(bkg_norm_init, bkg_norm)
-    #     )
-
-    sig = ws.embeddedData('shapeSig_sig_bsvj')
-    if not sig:
-        logger.warning('Could not find shapeSig_sig_bsvj, trying shapeSig_bsvj_sig_morph')
+    # Compute bkg + mu * sig
+    if has_systematics:
+        # Use the shape pdf
         sig = ws.pdf('shapeSig_bsvj_sig_morph')
-        y_sig = bsvj.pdf_values(sig, mt_bin_centers)
+        norm = ws.function('n_exp_final_binbsvj_proc_sig').getVal()
+        logger.info(f'Initial signal norm: {norm_init:.2f}; Postfit signal norm: {norm:.2f}')
+        # mu should be already included for post fit signal, right?
+        y_sb = y_bkg + norm * bsvj.pdf_values(sig, mt_bin_centers)
     else:
-        _, y_sig, _ = bsvj.roodataset_values(sig)
-
-
-    bsvj.logger.info(
-        'Found {} entries in data, {} entries in signal (should match with datacard!)'
-        .format(y_data.sum(), y_sig.sum())
-        )
+        # No shape changes, just multiply signal by signal strength
+        y_sb = y_bkg + mu*y_sig
 
     fig, (ax, ax2) = plt.subplots(
         2, 1, gridspec_kw={'height_ratios': [3, 1]}, figsize=(12,16)
@@ -455,7 +460,6 @@ def mtdist():
         mt_binning[:-1], (y_bkg - y_data) / np.sqrt(y_data), where='post', c='b',
         )
 
-    y_sb = y_bkg + mu*y_sig
     ax.step(
         mt_binning[:-1], y_sb, where='post', c='r',
         label=r'$B_{{fit}}+\mu_{{fit}}$S ($\mu_{{fit}}$={0:.1f})'.format(mu)
