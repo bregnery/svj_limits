@@ -161,6 +161,7 @@ def gen_datacards_mp():
     parser.add_argument('--bdtcut', type=float, nargs='*')
     parser.add_argument('--mz', type=int, nargs='*')
     parser.add_argument('--rinv', type=float, nargs='*')
+    parser.add_argument('--mdark', type=int, nargs='*')
     parser.add_argument('-i', '--injectsignal', action='store_true')
     parser.add_argument('--nthreads', type=int, default=10)
     parser.add_argument('--tag', type=str, help='string suffix to outdir')
@@ -184,12 +185,16 @@ def gen_datacards_mp():
     # Filter for selected mzs
     if args.mz:
         use_mzs = set(args.mz)
-        signals = [s for s in signals if s['mz'] in use_mzs]
+        signals = [s for s in signals if int(s['mz']) in use_mzs]
     # Filter for selected rinvs
     if args.rinv:
         use_rinvs = set(args.rinv)
-        signals = [s for s in signals if s['rinv'] in use_rinvs]
-        
+        signals = [s for s in signals if float(s['rinv']) in use_rinvs]
+    # Filter for selected mdarks
+    if args.mdark:
+        use_mdarks = set(args.mdark)
+        signals = [s for s in signals if int(s['mdark']) in use_mdarks]
+
     combinations = list(itertools.product(bdtcuts, signals))
     bsvj.logger.info('Running %s combinations', len(combinations))
 

@@ -1210,8 +1210,9 @@ def gen_datacard(
     tag=None, mt_min=180., mt_max=720.,
     trigeff=None,
     ):
-    mz = signal['mz']
-    rinv = signal['rinv']
+    mz = int(signal['mz'])
+    rinv = float(signal['rinv'])
+    mdark = float(signal['mdark'])
 
     input = InputData(jsonfile)
     input = input.cut_mt(mt_min, mt_max)
@@ -1246,13 +1247,13 @@ def gen_datacard(
         # ['mcstat', 'lnN', 1.07, '-'],
         ]
 
-    sig_name = 'mz{:.0f}_rinv{:.1f}'.format(mz, rinv)
-    sig_th1 = input.sig_th1(sig_name, bdtcut, mz, rinv)
+    sig_name = 'mz{:.0f}_rinv{:.1f}_mdark{:.0f}'.format(mz, rinv, mdark)
+    sig_th1 = input.sig_th1(sig_name, bdtcut, mz, rinv, mdark)
     sig_datahist = ROOT.RooDataHist(sig_name, sig_name, ROOT.RooArgList(mt), sig_th1, 1.)
 
     syst_th1s = []
     used_systs = set()
-    for systname, direction, hist in input.systematics_hists(bdtcut, mz, rinv):
+    for systname, direction, hist in input.systematics_hists(bdtcut, mz, rinv, mdark):
         th1 = hist_to_th1(f'{sig_name}_{systname}{direction}', hist)
         syst_th1s.append(th1)
         if systname not in used_systs:
@@ -1275,7 +1276,7 @@ def gen_datacard(
         logger.info('Injecting signal in data_obs')
         data_datahist = ROOT.RooDataHist("data_obs", "Data", ROOT.RooArgList(mt), bkg_th1+sig_th1, 1.)
 
-    outfile = strftime('dc_%b%d{}/dc_mz{}_rinv{:.1f}_bdt{}.txt'.format('_'+tag if tag else '', mz, rinv, bdt_str))
+    outfile = strftime('dc_%b%d{}/dc_mz{}_rinv{:.1f}_mdark{}_bdt{}.txt'.format('_'+tag if tag else '', mz, rinv, mdark, bdt_str))
     if injectsignal: outfile = outfile.replace('.txt', '_injectsig.txt')
     compile_datacard_macro(
         winner_pdfs, data_datahist, sig_datahist,
