@@ -24,7 +24,7 @@ def plot_scipy_fits():
     parser.add_argument('-o', '--plotdir', type=str, default='plots_bkgfits_%b%d')
     parser.add_argument('-b', '--bdtcut', type=float, default=None)
     parser.add_argument('-n', '--npars', type=int, nargs='*')
-    parser.add_argument('-p', '--pdftype', type=str, default=None, choices=['main', 'alt'])
+    parser.add_argument('-p', '--pdftype', type=str, default=None, choices=['main', 'ua2'])
 
     args = parser.parse_args()
     plotdir = strftime(args.plotdir)
@@ -39,7 +39,7 @@ def plot_scipy_fits():
             tdir = tf.Get(tdir_name)
             bkg_hist = tdir.Get('Bkg')
 
-            for pdf_type in ['main', 'alt']:
+            for pdf_type in ['main', 'alt', 'ua2']:
                 if args.pdftype and pdf_type != args.pdftype: continue
                 bsvj.logger.info('Fitting pdf_type=%s, tdir_name=%s', pdf_type, tdir_name)
                 fig = plt.figure(figsize=(8,8))
@@ -86,7 +86,7 @@ def plot_roofit_fits():
     parser.add_argument('-o', '--plotdir', type=str, default='plots_bkgfits_%b%d')
     parser.add_argument('-b', '--bdtcut', type=float, default=None)
     parser.add_argument('-n', '--npars', type=int, nargs='*')
-    parser.add_argument('-p', '--pdftype', type=str, default=None, choices=['main', 'alt'])
+    parser.add_argument('-p', '--pdftype', type=str, default=None, choices=['main', 'alt', 'ua2'])
     args = parser.parse_args()
     plotdir = strftime(args.plotdir)
     if not osp.isdir(plotdir): os.makedirs(plotdir)
@@ -97,7 +97,7 @@ def plot_roofit_fits():
             tdir = tf.Get(tdir_name)
             bkg_hist = tdir.Get('Bkg')
             mt = bsvj.get_mt_from_th1(bkg_hist)
-            for pdf_type in ['main', 'alt']:
+            for pdf_type in ['main', 'alt', 'ua2']:
                 if args.pdftype and pdf_type != args.pdftype: continue
                 bsvj.logger.info('Fitting pdf_type=%s, tdir_name=%s', pdf_type, tdir_name)
                 if args.npars is not None and len(args.npars):
@@ -166,7 +166,7 @@ def gen_datacards_mp():
     parser.add_argument('--nthreads', type=int, default=10)
     parser.add_argument('--tag', type=str, help='string suffix to outdir')
     parser.add_argument('--minmt', type=float, default=180.)
-    parser.add_argument('--maxmt', type=float, default=720.)
+    parser.add_argument('--maxmt', type=float, default=650.)
     parser.add_argument('--trigeff', type=int, default=None, choices=[2016, 2017, 2018])
     args = parser.parse_args()
 

@@ -362,6 +362,7 @@ def trackedparam():
 def mtdist():
     rootfile = bsvj.pull_arg('rootfile', type=str).rootfile
     outfile = bsvj.read_arg('-o', '--outfile', type=str, default='muscan.png').outfile
+    #toyrootfile = bsvj.pull_arg('--toyrootfile', type=str).toyrootfile
 
     from scipy.interpolate import make_interp_spline # type:ignore
     
@@ -401,6 +402,12 @@ def mtdist():
     # Get the data histogram
     data = ws.data('data_obs')    
     y_data = bsvj.roodataset_values(data)[1]
+
+    # Get histogram from generated toy
+    #with bsvj.open_root(toyrootfile) as f:
+    #  toy = f.Get("toys/toy_1")
+    #data = ROOT.RooDataSet(toy,'mt')
+    #y_data = bsvj.roodataset_values(data)[1]
     errs_data = np.sqrt(y_data)
     logger.info(f'Prefit data # entries = {y_data.sum():.2f}, should match with datacard')
 
@@ -475,6 +482,7 @@ def mtdist():
     ax.set_xlabel(r'$m_{T}$ (GeV)')
     ax.set_yscale('log')
     ax2.set_ylabel('(pdf - data) / sqrt(data)', fontsize=18)
+    ax.set_ylim(0.1,5000)
 
     plt.savefig(outfile, bbox_inches='tight')
     if not(BATCH_MODE) and cmd_exists('imgcat'): os.system('imgcat ' + outfile)
@@ -869,7 +877,7 @@ def bkgfit():
     npars = bsvj.pull_arg('--npars', type=int, default=None).npars
 
     input = bsvj.InputData(jsonfile)
-    if mtrange is None: mtrange = [180., 720.]
+    if mtrange is None: mtrange = [180., 650.]
     input = input.cut_mt(mtrange[0], mtrange[1])
 
     bdt_str = '{:.1f}'.format(bdtcut).replace('.', 'p')
