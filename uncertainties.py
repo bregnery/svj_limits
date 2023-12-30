@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import boosted_fits as bsvj
+import numpy as np
 
 scripter = bsvj.Scripter()
 @scripter
@@ -15,6 +16,7 @@ def systematics():
     syst_data={}
     sig = ws.data('sig')
     sig_data = bsvj.roodataset_values(sig)
+    b=np.linspace(180,650,52)
     for i in systematics_list:
       syst[i]={}
       syst_data[i]={}
@@ -22,8 +24,8 @@ def systematics():
       for j in ['Up','Down']:
         syst[i][j] = ws.data('sig_'+str(i)+str(j))
         syst_data[i][j] = bsvj.roodataset_values(syst[i][j])
-        plt.hist(syst_data[i][j][0],bins=52,weights=syst_data[i][j][1], histtype='step',linewidth=2,label=str(i)+str(j))
-      plt.hist(sig_data[0],bins=52,weights=sig_data[1], histtype='step',linewidth=2,label='sig')
+        plt.hist(syst_data[i][j][0],bins=b,weights=syst_data[i][j][1], histtype='step',linewidth=2,label=str(i)+str(j))
+      plt.hist(sig_data[0],bins=b,weights=sig_data[1], histtype='step',linewidth=2,label='sig')
       plt.legend()
       plt.ylabel('A.U.')
       #plt.yscale('log')
