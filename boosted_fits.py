@@ -243,7 +243,7 @@ class InputData(object):
         with open(jsonfile, 'r') as f:
             self.d = json.load(f)
             n_hists = build_histograms_in_dict_tree(self.d)
-            logger.info('Read %s histograms from %s', n_hists, jsonfile)
+            #logger.info('Read %s histograms from %s', n_hists, jsonfile)
 
     def copy(self):
         return copy.deepcopy(self)
@@ -267,10 +267,10 @@ class InputData(object):
         if max_mt is not None:
             i_bin_max = np.argmax(copy.mt_array >= max_mt)
         copy.mt = copy.mt[i_bin_min:i_bin_max]
-        logger.info(
-            'Cutting histograms {}<mt<{}, i_bin_min={}, i_bin_max={}'
-            .format(min_mt, max_mt, i_bin_min, i_bin_max)
-            )
+        #logger.info(
+        #    'Cutting histograms {}<mt<{}, i_bin_min={}, i_bin_max={}'
+        #    .format(min_mt, max_mt, i_bin_min, i_bin_max)
+        #    )
         for h in iter_histograms(copy.d):
             h.binning = copy.mt
             h.vals = h.vals[i_bin_min:i_bin_max-1]
@@ -499,7 +499,7 @@ def fit_roofit(pdf, data_hist=None, init_vals=None, init_ranges=None):
 
             # First check if the init_val is *outside* of the current range:
             if value < left:
-                new_left = value - 10.*abs(value)
+                new_left = value -10.*abs(value)
                 logger.info(
                     f'Increasing range for {par.GetName()} on the left:'
                     f'({left:.2f}, {right:.2f}) -> ({new_left:.2f}, {right:.2f})'
@@ -514,9 +514,9 @@ def fit_roofit(pdf, data_hist=None, init_vals=None, init_ranges=None):
                 par.setMax(new_right)
 
             # Now check if any of the ranges are needlessly large
-            if abs(value) / min(abs(left), abs(right)) < 0.5:
-                new_left = -5.*abs(value)
-                new_right = 5.*abs(value)
+            if abs(value) / min(abs(left), abs(right)) < 0.1:
+                new_left = -10.*abs(value)
+                new_right = 10.*abs(value)
                 logger.info(
                     f'Decreasing range for {par.GetName()} on both sides:'
                     f'({left:.2f}, {right:.2f}) -> ({new_left:.2f}, {new_right:.2f})'
@@ -792,7 +792,7 @@ def pdf_parameters(pdf_type, npars, prefix=None):
     if pdf_type == 'main':
         if npars == 2:
             parameters = [
-                ROOT.RooRealVar(prefix + "_p1", "p1", 1., -45., 45.),
+                ROOT.RooRealVar(prefix + "_p1", "p1", 1., -30., 30.),
                 ROOT.RooRealVar(prefix + "_p2", "p2", 1., -10., 10.)
                 ]
         elif npars == 3:
@@ -841,7 +841,7 @@ def pdf_parameters(pdf_type, npars, prefix=None):
         if npars == 2:
             parameters = [
                 ROOT.RooRealVar(prefix + "_p1", "p1", 1., -100., 100.),
-                ROOT.RooRealVar(prefix + "_p2", "p2", 1., -75., 75.)
+                ROOT.RooRealVar(prefix + "_p2", "p2", 1., -100., 100.)
                 ]
 
         elif npars == 3:
@@ -918,19 +918,19 @@ def pdf_factory(pdf_type, n_pars, mt, bkg_th1, name=None, mt_scale='1000', trige
     """
     if pdf_type not in {'main', 'alt', 'ua2'}: raise Exception('Unknown pdf_type %s' % pdf_type)
     if name is None: name = uid()
-    logger.info(
-        'Building name={} pdf_type={} n_pars={} mt.GetName()="{}", bkg_th1.GetName()="{}"'
-        .format(name, pdf_type, n_pars, mt.GetName(), bkg_th1.GetName())
-        )
+    #logger.info(
+    #    'Building name={} pdf_type={} n_pars={} mt.GetName()="{}", bkg_th1.GetName()="{}"'
+    #    .format(name, pdf_type, n_pars, mt.GetName(), bkg_th1.GetName())
+    #    )
     expression = pdf_expression(pdf_type, n_pars, mt_scale)
     if trigeff in [2016, 2017, 2018]:
         logger.info('Adding trigger efficiency formula to expression')
         expression = '({})/({})'.format(expression, trigeff_expression(trigeff))
     parameters = pdf_parameters(pdf_type, n_pars, name)
-    logger.info(
-        'Expression: {}; Parameter names: {}'
-        .format(expression, ', '.join(p.GetName() for p in parameters))
-        )
+    #logger.info(
+    #    'Expression: {}; Parameter names: {}'
+    #    .format(expression, ', '.join(p.GetName() for p in parameters))
+    #    )
     generic_pdf = ROOT.RooGenericPdf(
         name+'_rgp', name+'_rgp',
         expression, ROOT.RooArgList(mt, *parameters)
@@ -951,7 +951,7 @@ def pdf_factory(pdf_type, n_pars, mt, bkg_th1, name=None, mt_scale='1000', trige
     pdf.th1 = bkg_th1
     pdf.pdf_type = pdf_type
     pdf.mt = mt
-    logger.info('Created {}'.format(pdf))
+    #logger.info('Created {}'.format(pdf))
     return pdf
 
 
@@ -1298,7 +1298,7 @@ def gen_datacard(
         # plot_fits(pdfs, ress, data_datahist, pdf_type + '.pdf')
 
     systs = [
-        ['lumi', 'lnN', 1.026, '-'],
+        ['lumi', 'lnN', 1.016, '-'],
         # Place holders
         #['trigger', 'lnN', 1.02, '-'],
         #['pdf', 'lnN', 1.05, '-'],
@@ -1768,7 +1768,7 @@ def scan(cmd):
     cmd = bestfit(cmd)
     cmd.kwargs['--algo'] = 'grid'
     cmd.kwargs['--alignEdges'] = 1
-    rmin, rmax = pull_arg('-r', '--range', type=float, default=[0., 2.], nargs=2).range
+    rmin, rmax = pull_arg('-r', '--range', type=float, default=[-3., 5.], nargs=2).range
     cmd.add_range('r', rmin, rmax)
     cmd.track_parameters.add('r')
     cmd.kwargs['--points'] = pull_arg('-n', type=int, default=100).n

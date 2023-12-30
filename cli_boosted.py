@@ -175,6 +175,7 @@ def gen_datacards_mp():
 
     signals = []
     for key, hist in input.d['histograms']['0.000'].items():
+    #for key, hist in input.d['histograms']['0.0'].items():
         if 'mz' in hist.metadata and not key.startswith('SYST_'):
             signals.append(hist.metadata)
 
@@ -340,7 +341,7 @@ def gentoys():
         cmd.raw = ' '.join(sys.argv[1:])
 
         assert '-t' in cmd.kwargs
-        assert '-s' in cmd.kwargs
+        #assert '-s' in cmd.kwargs
         assert '--expectSignal' in cmd.kwargs
 
         bsvj.run_combine_command(cmd)

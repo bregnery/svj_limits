@@ -72,6 +72,10 @@ def name_from_combine_rootfile(rootfile, strip_obs_asimov=False):
 def namespace_to_attrdict(args):
     return bsvj.AttrDict(**vars(args))
 
+def get_xsec(mz):
+    xsec = {200:7.412*0.47, 250:7.044*0.47, 300:6.781*0.47, 350:6.158*0.47, 400:5.566*0.47, 450:5.021*0.47, 500:4.439*0.47, 550:3.795*0.47, }
+    return xsec[mz]
+
 def get_mz(path):
     return int(re.search(r'mz(\d+)', osp.basename(path)).group(1))
 
@@ -609,7 +613,7 @@ def interpolate_95cl_limit(cls):
     def interpolate(cl, thing):
         # print('Interpolating')
         # select = ((cl < .20) & (mu>0))
-        select = ((cl < .50) & (cl > .001) & (mu>0))
+        select = ((cl < .70) & (cl > .001) & (mu>0))
         if select.sum() == 0:
             logger.error('0.01<cl<0.20 & mu>0 yields NO scan points; can\'t interpolate %s', thing)
             return None
@@ -727,6 +731,7 @@ def brazil():
     points = []
     for obs_rootfile, asimov_rootfile in zip(obs_rootfiles, asimov_rootfiles):
         mz = get_mz(obs_rootfile)
+        xsec = get_xsec(mz)
         assert mz == get_mz(asimov_rootfile)
         obs, asimov = extract_scans([obs_rootfile, asimov_rootfile])
         if clean:
@@ -736,6 +741,7 @@ def brazil():
         limit = interpolate_95cl_limit(cls)
         points.append(bsvj.AttrDict(
             mz = mz,
+            xsec = xsec,
             limit = limit,
             cls = cls
             ))
@@ -777,33 +783,45 @@ def brazil():
     ax = fig.gca()
     
     with quick_ax(figsize=(12,10), outfile=outfile) as ax:
+        ax.plot([],[],label='95% CL upper limits (cut-based)',color='white')
+        ax.plot([],[],label=r'$m_{dark}$=10 GeV, $r_{inv}$=0.3',color='white')
 
         ax.fill_between(
             [p.mz for p in points if p.limit.twosigma_success],
-            [p.limit.twosigma_down for p in points if p.limit.twosigma_success],
-            [p.limit.twosigma_up for p in points if p.limit.twosigma_success],
-            color=cms_yellow
+            [p.limit.twosigma_down*p.xsec for p in points if p.limit.twosigma_success],
+            [p.limit.twosigma_up*p.xsec for p in points if p.limit.twosigma_success],
+            color=cms_yellow, label='95% expected'
             )
         ax.fill_between(
             [p.mz for p in points if p.limit.onesigma_success],
-            [p.limit.onesigma_down for p in points if p.limit.onesigma_success],
-            [p.limit.onesigma_up for p in points if p.limit.onesigma_success],
-            color=cms_green
+            [p.limit.onesigma_down*p.xsec for p in points if p.limit.onesigma_success],
+            [p.limit.onesigma_up*p.xsec for p in points if p.limit.onesigma_success],
+            color=cms_green, label='68% expected'
             )
 
         ax.plot(
             [p.mz for p in points if p.limit.expected is not None],
-            [p.limit.expected for p in points if p.limit.expected is not None],
-            c='black', linestyle='--', label='Exp'
+            [p.limit.expected*p.xsec for p in points if p.limit.expected is not None],
+            c='blue', linestyle='--', label='Median expected'
             )
         ax.plot(
             [p.mz for p in points if p.limit.observed is not None],
-            [p.limit.observed for p in points if p.limit.observed is not None],
-            c='black', linestyle='-', label='Obs'
+            [p.limit.observed*p.xsec for p in points if p.limit.observed is not None],
+            c='black', linestyle='-', label='Observed',marker='o'
             )
-
+        ax.plot(
+            [p.mz for p in points if p.limit.observed is not None],
+            [p.xsec for p in points if p.limit.observed is not None],
+            c='magenta', linestyle='-',label='Theoretical'
+        )
+        #ax.text(1.5,0.7,'95% CL upper limits (cut-based)',fontsize=10)
+        #ax.text(1.5,0.5, r'$m_{dark}$=10 GeV, $r_{inv}$=0.3',fontsize=10)
         ax.set_xlabel(r'$m_{Z\prime}$ (GeV)')
-        ax.set_ylabel(r'$\mu$')
+        ax.set_ylim(0.1,50)
+        ax.grid(True)
+        #ax.set_ylabel(r'$\mu$')
+        ax.set_ylabel(r'$\sigma \times BR$(pb)')
+        ax.set_yscale('log')
         apply_ranges(ax)
         ax.legend(framealpha=0.0)
 
@@ -868,7 +886,7 @@ def bkgfit():
     """
     jsonfile = bsvj.pull_arg('jsonfile', type=str).jsonfile
     bdtcut = bsvj.pull_arg('bdtcut', type=float).bdtcut
-    pdftype = bsvj.pull_arg('pdftype', type=str, choices=['main', 'alt']).pdftype
+    pdftype = bsvj.pull_arg('pdftype', type=str, choices=['main', 'alt', 'ua2']).pdftype
     logscale = bsvj.pull_arg('--log', action='store_true').log
     trigeff = bsvj.pull_arg('--trigeff', type=int, default=None, choices=[2016, 2017, 2018]).trigeff
     fitmethod = bsvj.pull_arg('--fitmethod', type=str, choices=['scipy', 'auto'], default='auto').fitmethod
