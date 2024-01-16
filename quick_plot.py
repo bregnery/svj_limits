@@ -613,7 +613,7 @@ def interpolate_95cl_limit(cls):
     def interpolate(cl, thing):
         # print('Interpolating')
         # select = ((cl < .20) & (mu>0))
-        select = ((cl < .70) & (cl > .001) & (mu>0))
+        select = ((cl < .99) & (cl > .001) & (mu>0))
         if select.sum() == 0:
             logger.error('0.01<cl<0.20 & mu>0 yields NO scan points; can\'t interpolate %s', thing)
             return None
