@@ -93,6 +93,16 @@ def set_args(args):
     finally:
         sys.argv = _old_sys_args
 
+@contextmanager
+def reset_sys_argv():
+    """
+    Saves a copy of sys.argv, and resets it upon closing this context
+    """
+    saved_sys_args = sys.argv[:]
+    try:
+        yield None
+    finally:
+        sys.argv = saved_sys_args
 
 @contextmanager
 def timeit(msg):
@@ -103,7 +113,7 @@ def timeit(msg):
         yield None
     finally:
         logger.info('  Done, took %s secs', time.time() - t0)
-
+    
 
 class Scripter:
     def __init__(self):
@@ -163,15 +173,8 @@ def hist_to_th1(name, hist):
     Takes a dict-like histogram (keys: binning, vals, errs) and
     returns a ROOT.TH1F
     """
-    n_bins = len(hist.binning)-1
-    th1 = ROOT.TH1F(name, name, n_bins, array('f', hist.binning))
-    ROOT.SetOwnership(th1, False)
-    assert len(hist.vals) == n_bins
-    assert len(hist.errs) == n_bins
-    for i in range(n_bins):
-        th1.SetBinContent(i+1, hist.vals[i])
-        th1.SetBinError(i+1, hist.errs[i])
-    return th1
+    logger.warning('Deprecated: use Histogram.th1(name) instead')
+    return hist.th1(name)
 
 
 def hist_cut_left(hist, i_bin_min):
@@ -188,11 +191,28 @@ def hist_cut_left(hist, i_bin_min):
 
 class Histogram:
     def __init__(self, d):
-        self.vals = d['vals']
-        self.errs = d['errs']
-        self.binning = d['binning']
+        self.vals = np.array(d['vals'])
+        self.errs = np.array(d['errs'])
+        self.binning = np.array(d['binning'])
         self.metadata = d['metadata']
 
+    def copy(self):
+        """Returns a copy"""
+        return copy.deepcopy(self)
+
+    def th1(self, name):
+        """
+        Converts histogram to a ROOT.TH1F
+        """
+        n_bins = len(self.binning)-1
+        th1 = ROOT.TH1F(name, name, n_bins, array('f', list(self.binning)))
+        ROOT.SetOwnership(th1, False)
+        assert len(self.vals) == n_bins
+        assert len(self.errs) == n_bins
+        for i in range(n_bins):
+            th1.SetBinContent(i+1, self.vals[i])
+            th1.SetBinError(i+1, self.errs[i])
+        return th1
 
 
 def build_histograms_in_dict_tree(d, parent=None, key=None):
@@ -234,6 +254,23 @@ def ls_inputdata(d, depth=0, key='<root>'):
             ls_inputdata(v, depth+1, k)
 
 
+class Decoder(json.JSONDecoder):
+    """
+    Standard JSON decoder, but support for the Histogram class
+    """
+    def __init__(self, *args, **kwargs):
+        json.JSONDecoder.__init__(self, object_hook=self.object_hook, *args, **kwargs)
+
+    def object_hook(self, d):
+        try:
+            is_histogram = d['type'] == 'Histogram'
+        except (AttributeError, KeyError):
+            is_histogram = False
+        if is_histogram:
+            return Histogram(d)
+        return d
+
+
 class InputData(object):
     """
     Interface class for a JSON file that contains histograms
@@ -241,9 +278,7 @@ class InputData(object):
     def __init__(self, jsonfile):
         self.jsonfile = jsonfile
         with open(jsonfile, 'r') as f:
-            self.d = json.load(f)
-            n_hists = build_histograms_in_dict_tree(self.d)
-            #logger.info('Read %s histograms from %s', n_hists, jsonfile)
+            self.d = json.load(f, cls=Decoder)
 
     def copy(self):
         return copy.deepcopy(self)
@@ -345,6 +380,98 @@ class InputData(object):
                 direction = 'Up' if '_up' in hist.metadata['systname'] else 'Down'
                 systname = hist.metadata['systname'].replace('_up','').replace('_down','')
                 yield systname, direction, hist
+
+
+class InputDataV2(InputData):
+    """
+    9 Feb 2024: Reworked .json input format.
+    Now only one signal model per .json file, so one InputDataV2 instance represents
+    one signal model parameter variation.
+    That way, datacard generation can be made class methods.
+    """
+    def __init__(self, jsonfile, mt_min=180., mt_max=720.):
+        self.jsonfile = jsonfile
+        with open(jsonfile, 'r') as f:
+            self.d = json.load(f, cls=Decoder)
+
+        self.mt = self.d['central'].binning
+        self.metadata = self.d['central'].metadata
+
+        # Cut mt range
+        i_bin_min = 0
+        i_bin_max = len(self.mt)-1
+        if mt_min is not None:
+            i_bin_min = np.argmax(self.mt_array >= mt_min)
+        if mt_max is not None:
+            i_bin_max = np.argmax(self.mt_array >= mt_max)
+        self.mt = self.mt[i_bin_min:i_bin_max]
+        for h in iter_histograms(self.d):
+            h.binning = self.mt
+            h.vals = h.vals[i_bin_min:i_bin_max-1]
+            h.errs = h.errs[i_bin_min:i_bin_max-1]
+
+
+    def gen_datacard(self, use_cache=True, fit_cache_lock=None):
+        mz = int(self.metadata['mz'])
+        rinv = float(self.metadata['rinv'])
+        mdark = int(self.metadata['mdark'])
+
+        bkg_th1 = self.d['bkg'].th1('bkg')
+        mt = get_mt(self.mt[0], self.mt[-1], self.n_bins, name='mt')
+
+        data_datahist = ROOT.RooDataHist("data_obs", "Data", ROOT.RooArgList(mt), bkg_th1, 1.)
+
+        pdfs_dict = {
+            'main' : pdfs_factory('main', mt, bkg_th1, name='bsvj_bkgfitmain'),
+            'alt' : pdfs_factory('alt', mt, bkg_th1, name='bsvj_bkgfitalt'),
+            'ua2' : pdfs_factory('ua2', mt, bkg_th1, name='bsvj_bkgfitua2'),
+            }
+
+        cache = None
+        if use_cache:
+            from fit_cache import FitCache
+            cache = FitCache(lock=fit_cache_lock)
+
+        winner_pdfs = []
+        for pdf_type in ['main', 'ua2']:
+            pdfs = pdfs_dict[pdf_type]
+            ress = [ fit(pdf, cache=cache) for pdf in pdfs ]
+            i_winner = do_fisher_test(mt, data_datahist, pdfs)
+            winner_pdfs.append(pdfs[i_winner])
+
+        systs = [
+            ['lumi', 'lnN', 1.016, '-'],
+            ['trigger_cr', 'lnN', 1.02, '-'],
+            ['trigger_sim', 'lnN', 1.021, '-'],
+            ]
+
+        sig_name = 'mz{:.0f}_rinv{:.1f}_mdark{:.0f}'.format(mz, rinv, mdark)
+        sig_th1 = self.d['central'].th1(sig_name)
+        sig_datahist = ROOT.RooDataHist(sig_name, sig_name, ROOT.RooArgList(mt), sig_th1, 1.)
+
+        syst_th1s = []
+        used_systs = set()
+        for key, hist in self.d.items():
+            if '_up' in key:
+                direction = 'Up'
+            elif '_down' in key:
+                direction = 'Down'
+            else:
+                continue # Not a systematic
+            syst_name = key.replace('_up','').replace('_down','')
+            # Don't add the line twice
+            if syst_name not in used_systs:
+                systs.append([syst_name, 'shape', 1, '-'])
+                used_systs.add(syst_name)
+            syst_th1s.append(hist.th1(f'{sig_name}_{syst_name}{direction}'))
+
+        outfile = strftime(f'dc_%Y%m%d_{self.metadata["selection"]}/dc_{osp.basename(self.jsonfile).replace(".json","")}.txt')
+        compile_datacard_macro(
+            winner_pdfs, data_datahist, sig_datahist,
+            outfile,
+            systs=systs,
+            syst_th1s=syst_th1s,
+            )    
 
 
 
@@ -1229,31 +1356,65 @@ def do_fisher_test(mt, data, pdfs, a_crit=.07):
     rsss = [ get_rss_viaframe(mt, pdf.pdf, data, return_n_bins=True) for pdf in pdfs ]
     # Compute test values of all combinations beforehand
     cl_vals = {}
-    for i, j in itertools.combinations(range(len(pdfs)), 2):
-        n1 = pdfs[i].n_pars
-        n2 = pdfs[j].n_pars
-        rss1, _      = rsss[i]
-        rss2, n_bins = rsss[j]
-        f = ((rss1-rss2)/(n2-n1)) / (rss2/(n_bins-n2))
-        cl = 1.-ROOT.TMath.FDistI(f, n2-n1, n_bins-n2)
-        cl_vals[(i,j)] = cl
-    # Get the winner index
-    get_winner = lambda i, j: i if cl_vals[(i,j)] > a_crit else j
+    for i in range(len(pdfs)-1):
+        for j in range(i+1, len(pdfs)):
+            n1 = pdfs[i].n_pars
+            n2 = pdfs[j].n_pars
+            rss1, _      = rsss[i]
+            rss2, n_bins = rsss[j]
+            f = ((rss1-rss2)/(n2-n1)) / (rss2/(n_bins-n2))
+            cl = 1.-ROOT.TMath.FDistI(f, n2-n1, n_bins-n2)
+            cl_vals[(i,j)] = cl
+
+    def get_winner(i, j):
+        if i >= j: raise Exception('i must be smaller than j')
+        a_test = cl_vals[(i,j)]
+        n_pars_i = pdfs[i].n_pars
+        n_pars_j = pdfs[j].n_pars
+        if a_test > a_crit:
+            # Null hypothesis is that the higher n_par j is not significantly better.
+            # Null hypothesis is not rejected
+            logger.info(
+                f'Comparing n_pars={n_pars_i} with n_pars={n_pars_j}:'
+                f' a_test={a_test:.4f} > {a_crit};'
+                f' null hypothesis NOT rejected, n_pars={n_pars_i} wins'
+                )
+            return i
+        else:
+            # Null hypothesis is rejected, the higher n_par j pdf is significantly better
+            logger.info(
+                f'Comparing n_pars={n_pars_i} with n_pars={n_pars_j}:'
+                f' a_test={a_test:.4f} < {a_crit};'
+                f' null hypothesis REJECTED, n_pars={n_pars_j} wins'
+                )
+            return j
+
+    # get_winner = lambda i, j: i if cl_vals[(i,j)] > a_crit else j
+
+    logger.info('Running F-test')
     winner = get_winner(0,1)
     for i in range(2,len(pdfs)):
         winner = get_winner(winner, i)
-    if logger.level <= logging.INFO:
-        # Print the table
-        logger.info(
-            'Winner is pdf {} with {} parameters'
-            .format(winner, pdfs[winner].n_pars)
-            )
-        table = [[''] + list(range(1,len(pdfs)))]
-        for i in range(len(pdfs)-1):
-            table.append(
-                [i] + ['{:6.4f}'.format(cl_vals[(i,j)]) for j in range(i+1,len(pdfs))]
-                )
-        logger.info('alpha values of pdf i vs j:\n' + tabelize(table))
+    logger.info(f'Winner is pdf {winner} with {pdfs[winner].n_pars} parameters')
+
+    # Print the table
+    table = [[''] + [f'{p.n_pars}' for p in pdfs[1:]]]
+    for i in range(len(pdfs)-1):
+        a_test_vals = [f'{pdfs[i].n_pars}'] + ['' for _ in range(len(pdfs)-1)]
+        for j in range(i+1, len(pdfs)):
+            a_test_vals[j] = f'{cl_vals[(i,j)]:9.7f}'
+        table.append(a_test_vals)
+    logger.info('alpha_test values of pdf i vs j:\n' + tabelize(table))
+
+    tex_table = copy.deepcopy(table)
+    tex_table[0][0] = '\\# of pars'
+    for row in tex_table:
+        for i in range(len(row)-1,0,-1):
+            row.insert(i, '&')
+        row.append('\\\\')
+    tex_table.insert(1, ['\\hline'])
+    logger.info(f'Tex-formatted table:\n{tabelize(tex_table)}')
+
     return winner
     
 
@@ -1607,7 +1768,7 @@ class CombineCommand(object):
     comma_separated_arg_map = { camel_to_snake(v.strip('-')) : v for v in comma_separated_args }
     comma_separated_arg_map['redefine_signal_pois'] = '--redefineSignalPOIs'
 
-    def __init__(self, dc=None, method='MultiDimFit', args=None, kwargs=None, raw=None):
+    def __init__(self, dc=None, method='MultiDimFit', args=None, kwargs=None, pass_through=None):
         self.dc = dc
         self.method = method
         self.args = set() if args is None else args
@@ -1616,7 +1777,7 @@ class CombineCommand(object):
         for key in self.comma_separated_arg_map: setattr(self, key, set())
         self.parameters = OrderedDict()
         self.parameter_ranges = OrderedDict()
-        self.raw = raw
+        self.pass_through = [] if pass_through is None else pass_through
 
     def get_name_key(self):
         """
@@ -1675,6 +1836,65 @@ class CombineCommand(object):
         self.parameters[name] = value
         if left is not None and right is not None: self.add_range(name, left, right)
 
+    def pick_pdf(self, pdf):
+        """
+        Picks the background pdf. Freezes pdf_index, and freezes parameters of any other
+        pdfs in the datacard.
+        """
+        logger.info('Using pdf %s', pdf)
+        self.set_parameter('pdf_index', {'main':0, 'ua2':1}[pdf])
+        pdf_pars = self.dc.syst_rgx('bsvj_bkgfit%s_npars*' % pdf)
+        other_pdf = {'main':'ua2', 'ua2':'main'}[pdf]
+        other_pdf_pars = self.dc.syst_rgx('bsvj_bkgfit%s_npars*' % other_pdf)
+        self.freeze_parameters.add('pdf_index')
+        self.freeze_parameters.update(other_pdf_pars)
+        self.track_parameters.update(['r'] + pdf_pars)
+
+    def asimov(self, flag=True):
+        """
+        Turns on Asimov settings.
+        """
+        if flag:
+            logger.info('Doing asimov')
+            self.kwargs['-t'] = -1
+            self.args.add('--toysFrequentist')
+            self.name = 'Asimov'
+        else:
+            logger.info('Doing observed')
+            self.name = 'Observed'
+
+    def configure_from_command_line(self):
+        """
+        Configures the CombineCommand based on command line parameters.
+        sys.argv is reset to its original state at the end of the function.
+        """
+        with reset_sys_argv():
+            asimov = pull_arg('-a', '--asimov', action='store_true').asimov
+            self.asimov(asimov)
+
+            logger.info('Taking pdf from command line (default is ua2)')
+            pdf = pull_arg('--pdf', type=str, choices=['main', 'ua2'], default='ua2').pdf
+            self.pick_pdf(pdf)
+
+            toyseed = pull_arg('-t', type=int).t
+            if toyseed:
+                if asimov: raise Exception('asimov and -t >-1 are exclusive options')
+                self.kwargs['-t'] = toyseed
+                self.args.add('--toysFrequentist')
+                self.kwargs['-s'] = 123456 # The default combine seed
+
+            seed = pull_arg('-s', '--seed', type=int).seed
+            if seed is not None: self.kwargs['-s'] = seed
+
+            self.kwargs['-v'] = pull_arg('-v', '--verbosity', type=int, default=0).verbosity
+            
+            expectSignal = pull_arg('--expectSignal', type=float).expectSignal
+            if expectSignal is not None: self.kwargs['--expectSignal'] = expectSignal
+
+            # Pass-through: Anything that's left is simply tagged on to the combine command as is
+            self.raw = ' '.join(sys.argv)
+
+
     def parse(self):
         """
         Returns the command as a list
@@ -1699,49 +1919,9 @@ class CombineCommand(object):
             strs = ['{0}={1},{2}'.format(parname, *ranges) for parname, ranges in self.parameter_ranges.items()]
             command.append('--setParameterRanges ' + ':'.join(strs))
 
-        if self.raw: command.append(self.raw)
+        if self.pass_through: command.append(' '.join(self.pass_through))
 
         return command
-
-
-def apply_combine_args(cmd):
-    """
-    Takes a CombineCommand, and reads arguments 
-    """
-    cmd = cmd.copy()
-    pdf = pull_arg('--pdf', type=str, choices=['main', 'ua2'], default='ua2').pdf
-    logger.info('Using pdf %s', pdf)
-    #cmd.set_parameter('pdf_index', {'main':0, 'ua2':1}[pdf])
-    pdf_pars = cmd.dc.syst_rgx('bsvj_bkgfit%s_npars*' % pdf)
-    other_pdf = {'main':'ua2', 'ua2':'main'}[pdf]
-    other_pdf_pars = cmd.dc.syst_rgx('bsvj_bkgfit%s_npars*' % other_pdf)
-    cmd.freeze_parameters.add('pdf_index')
-    cmd.freeze_parameters.update(other_pdf_pars)
-    cmd.track_parameters.update(['r'] + pdf_pars)
-
-    asimov = pull_arg('-a', '--asimov', action='store_true').asimov
-    if asimov:
-        logger.info('Doing asimov')
-        cmd.kwargs['-t'] = -1
-        cmd.args.add('--toysFrequentist')
-        cmd.name = 'Asimov'
-    else:
-        cmd.name = 'Observed'
-
-    toyseed = pull_arg('-t', type=int).t
-    if toyseed:
-        if asimov: raise Exception('asimov and -t >-1 are exclusive options')
-        cmd.kwargs['-t'] = toyseed
-        cmd.args.add('--toysFrequentist')
-
-    seed = pull_arg('-s', '--seed', type=int).seed
-    if seed is not None: cmd.kwargs['-s'] = seed
-    cmd.kwargs['-v'] = pull_arg('-v', '--verbosity', type=int, default=0).verbosity
-    
-    expectSignal = pull_arg('--expectSignal', type=int).expectSignal
-    if expectSignal is not None: cmd.kwargs['--expectSignal'] = expectSignal
-
-    return cmd
 
 
 def bestfit(cmd):

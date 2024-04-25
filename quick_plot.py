@@ -7,7 +7,7 @@ from time import strftime
 import argparse
 
 # Add the directory of this file to the path so the boosted tools can be imported
-import sys, os, os.path as osp, pprint, re, traceback, copy
+import sys, os, os.path as osp, pprint, re, traceback, copy, fnmatch
 from contextlib import contextmanager
 sys.path.append(osp.dirname(osp.abspath(__file__)))
 import boosted_fits as bsvj
@@ -365,6 +365,7 @@ def trackedparam():
 @scripter
 def mtdist():
     rootfile = bsvj.pull_arg('rootfile', type=str).rootfile
+    only_sig = bsvj.pull_arg('--onlysig', action='store_true').onlysig
     outfile = bsvj.read_arg('-o', '--outfile', type=str, default='muscan.png').outfile
     #toyrootfile = bsvj.pull_arg('--toyrootfile', type=str).toyrootfile
 
@@ -378,6 +379,8 @@ def mtdist():
     mt_bin_centers = .5*(mt_binning[1:]+mt_binning[:-1])
     mt_bin_widths = mt_binning[1:] - mt_binning[:-1]
 
+    mu_prefit = ws.var('r').getVal()
+
     # Get the prefit background histogram
     y_bkg_init = bsvj.pdf_values(ws.pdf('shapeBkg_roomultipdf_bsvj'), mt_bin_centers)
     pdf_raw_norm_prefit = np.sum(y_bkg_init)
@@ -388,15 +391,18 @@ def mtdist():
     has_systematics = not(bool(ws.embeddedData('shapeSig_sig_bsvj')))
     logger.info(f'Datacard {"has" if has_systematics else "does not have"} systematics')
 
-    # Get the signal histogram
+    # Get the pre-fit signal histogram
     if has_systematics:
         # Datacard with systematics
         # The signal histogram is saved only as a pdf, and reconstructing what
         # the signal should look like at mu=1, systs=0 is a little more complicated
         # Get the PDF and normalization separately
+        # Temporarily ensure mu=1
+        ws.var('r').setVal(1.0)
         sig = ws.pdf('shapeSig_bsvj_sig_morph')
         norm_init = ws.function('n_exp_binbsvj_proc_sig').getVal()
         y_sig = norm_init * bsvj.pdf_values(sig, mt_bin_centers)
+        ws.var('r').setVal(mu_prefit)
     else:
         # Datacard without systematics: Just get the datahist
         sig = ws.embeddedData('shapeSig_sig_bsvj')
@@ -438,10 +444,12 @@ def mtdist():
         norm = ws.function('n_exp_final_binbsvj_proc_sig').getVal()
         logger.info(f'Initial signal norm: {norm_init:.2f}; Postfit signal norm: {norm:.2f}')
         # mu should be already included for post fit signal, right?
-        y_sb = y_bkg + norm * bsvj.pdf_values(sig, mt_bin_centers)
+        y_sig_postfit = norm * bsvj.pdf_values(sig, mt_bin_centers)
+        y_sb = y_bkg + y_sig_postfit
     else:
         # No shape changes, just multiply signal by signal strength
-        y_sb = y_bkg + mu*y_sig
+        y_sig_postfit = mu*y_sig
+        y_sb = y_bkg + y_sig_postfit
 
     fig, (ax, ax2) = plt.subplots(
         2, 1, gridspec_kw={'height_ratios': [3, 1]}, figsize=(12,16)
@@ -450,43 +458,51 @@ def mtdist():
     ax.plot([], [], ' ', label=name_from_combine_rootfile(rootfile))
     ax2.plot([mt_binning[0], mt_binning[-1]], [0,0], c='gray')
 
-    ax.errorbar(
-        mt_bin_centers, y_data,
-        xerr=.5*mt_bin_widths, yerr=errs_data,
-        fmt='o', c='black', label='Data'
-        )
-    # logger.warning('data (roodst):  %s', y_data)
+    if only_sig:
+        ax.step(mt_binning[:-1], y_sig, where='post', c='purple', label=r'$S_{prefit}$')
+        ax.step(mt_binning[:-1], y_sig_postfit, where='post', c='cyan', label=f'$S_{{postfit}}$ ($\mu={mu:.3f}$)')
+        ax.step(mt_binning[:-1], y_sig_postfit/mu, where='post', c='red', label=r'$S_{postfit}$ ($\mu=1$)')
+        ax2.plot([mt_binning[0], mt_binning[-1]], [1,1], c='purple')
+        ax2.step(mt_binning[:-1], y_sig_postfit/y_sig, where='post', c='cyan')
+        ax2.step(mt_binning[:-1], y_sig_postfit/y_sig/mu, where='post', c='red')
+    else:
+        ax.errorbar(
+            mt_bin_centers, y_data,
+            xerr=.5*mt_bin_widths, yerr=errs_data,
+            fmt='o', c='black', label='Data'
+            )
+        # logger.warning('data (roodst):  %s', y_data)
 
-    ax.step(mt_binning[:-1], y_bkg_init, where='post', c='purple', label=r'$B_{prefit}$')
-    ax2.step(
-        mt_binning[:-1], (y_bkg_init - y_data) / np.sqrt(y_data), where='post', c='purple',
-        )
+        ax.step(mt_binning[:-1], y_bkg_init, where='post', c='purple', label=r'$B_{prefit}$')
+        ax2.step(
+            mt_binning[:-1], (y_bkg_init - y_data) / np.sqrt(y_data), where='post', c='purple',
+            )
 
+        mt_fine = np.linspace(mt_binning[0], mt_binning[-1], 100) # For fine plotting
+        spl = make_interp_spline(mt_bin_centers, y_bkg, k=3)  # type of this is BSpline
+        y_bkg_fine = spl(mt_fine)
+        ax.plot(mt_fine, y_bkg_fine, label=r'$B_{fit}$', c='b')
+        ax2.step(
+            mt_binning[:-1], (y_bkg - y_data) / np.sqrt(y_data), where='post', c='b',
+            )
 
-    mt_fine = np.linspace(mt_binning[0], mt_binning[-1], 100) # For fine plotting
-    spl = make_interp_spline(mt_bin_centers, y_bkg, k=3)  # type of this is BSpline
-    y_bkg_fine = spl(mt_fine)
-    ax.plot(mt_fine, y_bkg_fine, label=r'$B_{fit}$', c='b')
-    ax2.step(
-        mt_binning[:-1], (y_bkg - y_data) / np.sqrt(y_data), where='post', c='b',
-        )
+        ax.step(
+            mt_binning[:-1], y_sb, where='post', c='r',
+            label=r'$B_{{fit}}+\mu_{{fit}}$S ($\mu_{{fit}}$={0:.1f})'.format(mu)
+            )
+        ax2.step(
+            mt_binning[:-1], (y_sb - y_data) / np.sqrt(y_data), where='post', c='r',
+            )
 
-    ax.step(
-        mt_binning[:-1], y_sb, where='post', c='r',
-        label=r'$B_{{fit}}+\mu_{{fit}}$S ($\mu_{{fit}}$={0:.1f})'.format(mu)
-        )
-    ax2.step(
-        mt_binning[:-1], (y_sb - y_data) / np.sqrt(y_data), where='post', c='r',
-        )
-
-    ax.step(mt_binning[:-1], y_sig, where='post', label=r'S ($\mu$=1)', c='g')
+        ax.step(mt_binning[:-1], y_sig, where='post', label=r'S ($\mu$=1)', c='g')
 
     ax.legend(framealpha=0.0, fontsize=22)
     ax.set_ylabel('$N_{events}$')
     ax.set_xlabel(r'$m_{T}$ (GeV)')
     ax.set_yscale('log')
     ax2.set_ylabel('(pdf - data) / sqrt(data)', fontsize=18)
-    ax.set_ylim(0.1,5000)
+    if only_sig: ax2.set_ylabel('postfit / prefit', fontsize=18)
+    ax.set_ylim(1., None)
 
     plt.savefig(outfile, bbox_inches='tight')
     if not(BATCH_MODE) and cmd_exists('imgcat'): os.system('imgcat ' + outfile)
@@ -880,6 +896,116 @@ def brazil():
 
 
 @scripter
+def bkgfitv2():
+    """
+    Bkg fit plots
+    """
+    jsonfile = bsvj.pull_arg('jsonfile', type=str).jsonfile
+    pdftype = bsvj.pull_arg('pdftype', type=str, choices=['main', 'alt', 'ua2']).pdftype
+    linscale = bsvj.pull_arg('--lin', action='store_true').lin
+    scipyonly = bsvj.pull_arg('--scipyonly', action='store_true').scipyonly
+    outfile = bsvj.read_arg('-o', '--outfile', type=str, default='test.png').outfile
+
+    input = bsvj.InputDataV2(jsonfile)
+
+    mt = bsvj.get_mt(input.mt[0], input.mt[-1], input.n_bins, name='mt')
+    bin_centers = .5*(input.mt_array[:-1]+input.mt_array[1:])
+    bin_width = input.mt[1] - input.mt[0]
+    bkg_hist = input.d['bkg'] 
+    bkg_th1 = bkg_hist.th1('bkg')
+    data_datahist = ROOT.RooDataHist("data_obs", "Data", ROOT.RooArgList(mt), bkg_th1, 1.)
+
+    pdfs = bsvj.pdfs_factory(pdftype, mt, bkg_th1, name=pdftype)
+    
+    for pdf in pdfs:
+        if scipyonly:
+            pdf.res = bsvj.fit_scipy_robust(pdf.expression, pdf.th1, cache=None)
+            # Fill in the fitted parameters
+            for p, val in zip(pdf.parameters, pdf.res.x):
+                # Make sure the newly fitted value is actually in range
+                if val < p.getMin(): p.setMin(val - 0.1*abs(val))
+                if val > p.getMax(): p.setMax(val + 0.1*abs(val))
+                p.setVal(val)
+        else:
+            pdf.res = bsvj.fit(pdf)
+
+
+    # bsvj.plot_fits(pdfs, [p.res for p in pdfs], data_datahist, 'qp_' + pdftype + '.pdf')
+
+    if not scipyonly:
+        # Make sure pdfs are really fitted
+        pdf = pdfs[0]
+        res_par_set = pdf.res.floatParsFinal()
+        np.testing.assert_almost_equal(
+            [p.getVal() for p in pdf.parameters],
+            [res_par_set.at(i).getVal() for i in range(pdf.n_pars)]
+            )
+
+    # Make sure evaluation makes sense
+    y_pdf_eval = bsvj.eval_expression(pdf.expression, [bin_centers] + [p.getVal() for p in pdf.parameters])
+    y_pdf_eval /= y_pdf_eval.sum()
+    np.testing.assert_almost_equal(y_pdf_eval, pdf.evaluate(bin_centers), decimal=2)
+
+    # Do the fisher test and mark the winner pdf
+    winner = bsvj.do_fisher_test(mt, data_datahist, pdfs)
+    pdfs[winner].is_winner = True
+
+    bkg_hist.vals = np.array(bkg_hist.vals)
+    bkg_hist.shape = bkg_hist.vals / (bkg_hist.vals.sum()*bin_width)
+    
+    figure, (ax, ax2) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1]}, figsize=(12,16))
+
+    ax.plot([], [], ' ', label=f'{pdftype}, {input.metadata["selection"]}')
+    ax.step(input.mt[:-1], bkg_hist.vals, where='post', label=r'BKG', c='b')
+    ax2.plot([input.mt[0], input.mt[-1]], [0.,0.], c='gray')
+
+
+    fine_mt_axis = np.linspace(input.mt[0], input.mt[-1], 100)
+    for pdf in pdfs:
+        par_vals = [p.getVal() for p in pdf.parameters]
+
+        y_pdf = pdf.evaluate(bin_centers)
+        if abs(1. - y_pdf.sum()) > 0.01: logger.error('PDF norm is off from 1.:', y_pdf.sum())
+
+        if getattr(pdf, 'is_winner', False):
+            logger.warning('par vals: %s', par_vals)
+            logger.warning('y_pdf pre norm: %s (norm=%s)', y_pdf, y_pdf.sum())
+
+        y_pdf *= bkg_hist.vals.sum()
+        # y_pdf *= fit_norm(y_pdf, bkg_hist.vals) # Should be close to 1.0
+
+        if getattr(pdf, 'is_winner', False):
+            logger.warning('y_pdf post norm: %s (norm=%s)', y_pdf, y_pdf.sum())
+
+        chi2 = ((y_pdf-bkg_hist.vals)**2 / y_pdf).sum()
+        # chi2 /= (len(bin_centers) - pdf.npars)
+
+        label = (
+            '{}, $\\chi^{{2}}={:.5f}$: ['.format(pdf.n_pars, chi2)
+            + ', '.join(['{:.2f}'.format(v) for v in par_vals]) + ']'
+            )
+        if getattr(pdf, 'is_winner', False): label += ' WINNER'
+
+        y_pdf_fine = bsvj.eval_expression(pdf.expression, [fine_mt_axis] + par_vals)
+        bin_scale = bin_width / (fine_mt_axis[1]-fine_mt_axis[0])
+        y_pdf_fine = y_pdf_fine / y_pdf_fine.sum() * sum(bkg_hist.vals) * bin_scale
+        line = ax.plot(fine_mt_axis, y_pdf_fine, label=label)[0]
+        
+        pulls = (y_pdf - bkg_hist.vals) / bkg_hist.errs
+        ax2.scatter(bin_centers, pulls, color=line.get_color())
+
+
+    ax.legend(fontsize=18, framealpha=0.0)
+    ax.set_ylabel('$N_{events}$')
+
+    ax2.set_ylabel(r'(pdf - bkg) / $\Delta$bkg')
+    ax2.set_xlabel(r'$m_{T}$ (GeV)')
+    if not linscale: ax.set_yscale('log')
+    plt.savefig(outfile, bbox_inches='tight')
+    if not(BATCH_MODE) and cmd_exists('imgcat'): os.system('imgcat ' + outfile)
+
+
+@scripter
 def bkgfit():
     """
     Bkg fit plots
@@ -1014,6 +1140,52 @@ def bkgfit():
     if logscale: ax.set_yscale('log')
     plt.savefig(outfile, bbox_inches='tight')
     if not(BATCH_MODE) and cmd_exists('imgcat'): os.system('imgcat ' + outfile)
+
+
+@scripter
+def hist():
+    """
+    Quickly plot histograms from a file
+    """
+    infile = bsvj.pull_arg('infile', type=str).infile
+    histograms = bsvj.pull_arg('histograms', type=str, nargs='*').histograms
+
+    if infile.endswith('.json'):
+        input = bsvj.InputDataV2(infile)
+
+        if len(histograms) == 0:
+            bsvj.ls_inputdata(input.d)
+
+        else:
+            with quick_ax() as ax:
+                for pat in histograms:
+                    for h in fnmatch.filter(input.d.keys(), pat):
+                        hist = input.d[h]
+                        ax.step(hist.binning[:-1], hist.vals, where='post', label=h)
+                ax.legend()
+                ax.set_yscale('log')
+                ax.set_xlabel('MT (GeV)')
+        
+    elif infile.endswith('.root'):
+        with bsvj.open_root(infile) as tf:
+            w = tf.Get('SVJ')
+            if w:
+                if len(histograms)==0:
+                    w.Print()
+                else:
+                    with quick_ax() as ax:
+                        for h in histograms:
+                            rdh = w.data(h)
+                            x, y, dy = bsvj.roodataset_values(rdh)
+                            ax.step(x, y, where='post', label=h)
+                        ax.legend()
+                        ax.set_yscale('log')
+                        ax.set_xlabel('MT (GeV)')
+
+
+
+
+
 
 
 if __name__ == '__main__':

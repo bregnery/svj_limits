@@ -2,7 +2,7 @@
 Scripts using building blocks in boosted_fits.py to create datacards
 """
 
-import argparse, inspect, os, os.path as osp, re, json, itertools, sys
+import argparse, inspect, os, os.path as osp, re, json, itertools, sys, shutil
 from pprint import pprint
 from time import strftime, sleep
 from copy import copy
@@ -222,6 +222,25 @@ def gen_datacards_mp():
             pool.map(gen_datacard_worker, mp_args)
             pool.close()
 
+@scripter
+def gen_datacards_v2(args=None):
+    if args is None:
+        lock = None
+        json_files = bsvj.pull_arg('jsonfiles', nargs='+', type=str).jsonfiles
+    else:
+        json_files, lock = args
+
+    if len(json_files) == 1:
+        bsvj.InputDataV2(json_files[0]).gen_datacard(fit_cache_lock=lock)
+    else:
+        import multiprocessing as mp
+        with mp.Manager() as manager:
+            pool = mp.Pool(8)
+            lock = manager.Lock()
+            mp_args = [ ([f], lock) for f in json_files ]
+            pool.map(gen_datacards_v2, mp_args)
+            pool.close()
+
 
 @scripter
 def simple_test_fit():
@@ -289,63 +308,118 @@ def make_bestfit_and_scan_commands(txtfile, args=None):
     with bsvj.set_args(sys.argv[:1] + args):
         dc = bsvj.Datacard.from_txt(txtfile)
         cmd = bsvj.CombineCommand(dc)
-        cmd = bsvj.apply_combine_args(cmd)
+        cmd.configure_from_command_line()
         cmd.name += osp.basename(dc.filename).replace('.txt','')
         scan = bsvj.scan(cmd)
         bestfit = bsvj.bestfit(cmd)
-        scan.raw = ' '.join(sys.argv[1:])
-        bestfit.raw = ' '.join(sys.argv[1:])
         scan.name += 'Scan'
         bestfit.name += 'Bestfit'
     return bestfit, scan
 
 
 @scripter
-def bestfit():
-    txtfile = bsvj.pull_arg('datacard', type=str).datacard
+def bestfit(txtfile=None):
+    if txtfile is None:
+        # Allow multiprocessing if multiple datacards are passed on the command line
+        txtfiles = bsvj.pull_arg('datacards', type=str, nargs='+').datacards
+        if len(txtfiles) > 1:
+            # Call this function in a pool instead            
+            import multiprocessing as mp
+            with mp.Manager() as manager:
+                pool = mp.Pool(8)
+                pool.map(bestfit, txtfiles)
+                pool.close()
+            return
+        else:
+            txtfile = osp.abspath(txtfiles[0])
+
     dc = bsvj.Datacard.from_txt(txtfile)
     cmd = bsvj.CombineCommand(dc)
-    cmd = bsvj.apply_combine_args(cmd)
+    cmd.configure_from_command_line()
     cmd = bsvj.bestfit(cmd)
     cmd.raw = ' '.join(sys.argv[1:])
-    cmd.name += 'Bestfit'
+    cmd.name += 'Bestfit_' + osp.basename(txtfile).replace('.txt','')
     bsvj.run_combine_command(cmd, logfile=cmd.logfile)
+
+    outdir = bsvj.pull_arg('-o', '--outdir', type=str, default=strftime('bestfits_%Y%m%d')).outdir
+    outdir = osp.abspath(outdir)
+    os.makedirs(outdir, exist_ok=True)
+    bsvj.logger.info(f'{cmd.outfile} -> {osp.join(outdir, osp.basename(cmd.outfile))}')
+    shutil.move(cmd.outfile, osp.join(outdir, osp.basename(cmd.outfile)))
+    shutil.move(cmd.logfile, osp.join(outdir, osp.basename(cmd.logfile)))
 
 
 @scripter
 def gentoys():
-    # cmdGen="combine ${DC_NAME_ALL}
-    #   -M GenerateOnly
-    #   -n ${genName}
-    #   -t ${nTOYS}
-    #   --toysFrequentist
-    #   --saveToys
-    #   --expectSignal ${expSig}
-    #   --bypassFrequentistFit
-    #   --saveWorkspace
-    #   -s 123456
-    #   -v
-    #   -1
-    #   --setParameters $SetArgGenAll
-    #   --freezeParameters $FrzArgGenAll"
+    """
+    Generate toys from datacards
+    """
     datacards = bsvj.pull_arg('datacards', type=str, nargs='+').datacards
-    outdir = bsvj.pull_arg('-o', '--outdir', type=str, default=strftime('toys_%b%d')).outdir
+    outdir = bsvj.pull_arg('-o', '--outdir', type=str, default=strftime('toys_%Y%m%d')).outdir
     if not osp.isdir(outdir): os.makedirs(outdir)
+    bsvj.logger.info(f'Output will be moved to {outdir}')
 
     for dc_file in datacards:
         dc = bsvj.Datacard.from_txt(dc_file)
         cmd = bsvj.CombineCommand(dc)
-        cmd = bsvj.apply_combine_args(cmd)
+        cmd.configure_from_command_line()
         cmd.name += osp.basename(dc.filename).replace('.txt','')
-        cmd = bsvj.gen_toys(cmd)
-        cmd.raw = ' '.join(sys.argv[1:])
+
+        # Some specific settings for toy generation
+        cmd.method = 'GenerateOnly'
+        cmd.args.add('--saveToys')
+        cmd.args.add('--bypassFrequentistFit')
+        cmd.args.add('--saveWorkspace')
+        # Possibly delete some settings too
+        cmd.kwargs.pop('--algo', None)
+        cmd.track_parameters = set()
 
         assert '-t' in cmd.kwargs
-        #assert '-s' in cmd.kwargs
         assert '--expectSignal' in cmd.kwargs
 
         bsvj.run_combine_command(cmd)
-        os.rename(cmd.outfile, osp.join(outdir, osp.basename(cmd.outfile)))
+        bsvj.logger.info(f'Moving {cmd.outfile} -> {osp.join(outdir, osp.basename(cmd.outfile))}')
+        shutil.move(cmd.outfile, osp.join(outdir, osp.basename(cmd.outfile)))
+
+
+@scripter
+def fittoys2():
+    infiles = bsvj.pull_arg('infiles', type=str, nargs='+').infiles
+    outdir = bsvj.pull_arg('-o', '--outdir', type=str, default=strftime('fittoys_%Y%m%d')).outdir
+    if not osp.isdir(outdir): os.makedirs(outdir)
+    bsvj.logger.info(f'Output will be moved to {outdir}')
+
+    # Sort datacards and toysfiles
+    datacards = []
+    toysfiles = []
+    for f in infiles:
+        if 'GenerateOnly' in f:
+            toysfiles.append(f)
+        else:
+            datacards.append(f)
+
+    # Submit fit per datacard
+    for dc_file in datacards:
+        name = osp.basename(dc_file).replace('.txt','')
+        dc = bsvj.Datacard.from_txt(dc_file)
+        cmd = bsvj.CombineCommand(dc)
+        cmd.configure_from_command_line()
+        cmd = bsvj.bestfit(cmd)
+        cmd.name += name
+
+        for tf in toysfiles:
+            if name in tf:
+                cmd.kwargs['--toysFile'] = tf
+                break
+        else:
+            raise Exception(
+                f'Could not find a toy file for datacard {dc_file}; available toy files:\n'
+                + "\n".join(toysfiles)
+                )
+
+        bsvj.run_combine_command(cmd)
+        bsvj.logger.info(f'{cmd.outfile} -> {osp.join(outdir, osp.basename(cmd.outfile))}')
+        shutil.move(cmd.outfile, osp.join(outdir, osp.basename(cmd.outfile)))
 
 
 @scripter
@@ -376,10 +450,23 @@ def fittoys():
     for dc_file in datacards:
         dc = bsvj.Datacard.from_txt(dc_file)
         cmd = bsvj.CombineCommand(dc)
-        cmd = bsvj.apply_combine_args(cmd)
+        cmd.configure_from_command_line()
         cmd.name += osp.basename(dc.filename).replace('.txt','')
-        cmd = bsvj.fit_toys(cmd)
-        cmd.raw = ' '.join(sys.argv[1:])
+
+        cmd.method = 'FitDiagnostics'
+        cmd.kwargs.pop('--algo', None)
+        cmd.args.add('--toysFrequentist')
+        cmd.args.add('--saveToys')
+        cmd.args.add('--savePredictionsPerToy')
+        cmd.args.add('--bypassFrequentistFit')
+        cmd.kwargs['--X-rtd'] = 'MINIMIZER_MaxCalls=100000'
+
+        toysFile = bsvj.pull_arg('--toysFile', required=True, type=str).toysFile
+        cmd.kwargs['--toysFile'] = toysFile
+
+        if not '-t' in cmd.kwargs:
+            with bsvj.open_root(toysFile) as f:
+                cmd.kwargs['-t'] = f.Get('limit').GetEntries()
 
         assert '-t' in cmd.kwargs
         assert '--expectSignal' in cmd.kwargs
@@ -392,6 +479,113 @@ def fittoys():
 
 
 
+@scripter
+def impacts(dc_file=None):
+    if dc_file is None:
+        # Allow multiprocessing if multiple datacards are passed on the command line
+        dc_files = bsvj.pull_arg('datacards', type=str, nargs='+').datacards
+        if len(dc_files) > 1:
+            # Call this function in a pool instead
+            import multiprocessing as mp
+            with mp.Manager() as manager:
+                pool = mp.Pool(8)
+                pool.map(impacts, dc_files)
+                pool.close()
+            return
+        else:
+            dc_file = osp.abspath(dc_files[0])
+
+    dc = bsvj.Datacard.from_txt(dc_file)
+    base_cmd = bsvj.CombineCommand(dc)
+    base_cmd.configure_from_command_line()
+    # HIER VERDER
+
+    workdir = strftime(f'impacts_cli_%Y%m%d_{osp.basename(dc_file).replace(".txt","")}')
+    bsvj.logger.info(f'Executing from {workdir}')
+    if not bsvj.DRYMODE:
+        os.makedirs(workdir, exist_ok=True)
+        os.chdir(workdir)
+
+    # Initial fit
+    cmd = base_cmd.copy()
+    cmd.kwargs['--algo'] = 'singles'
+    cmd.kwargs['--redefineSignalPOIs'] = 'r'
+    cmd.kwargs['--floatOtherPOIs'] = 1
+    cmd.kwargs['--saveInactivePOI'] = 1
+    cmd.kwargs['--robustFit'] = 1
+    cmd.kwargs['--rMin'] = -2.4
+    # cmd.kwargs['--rMax'] = 10.
+    cmd.kwargs['-t'] = -1
+    cmd.kwargs['--expectSignal'] = 0.2
+    cmd.args.add('--saveWorkspace')
+    cmd.add_range('shapeBkg_roomultipdf_bsvj__norm', 0.1, 2.0)
+    cmd.name = '_initialFit_Test'
+    if osp.isfile(cmd.outfile):
+        bsvj.logger.warning(
+            f'Initial fit output already exists, not running initial fit command: {cmd}'
+            )
+    else:
+        bsvj.run_combine_command(cmd, logfile=cmd.logfile)
+    initial_fit_outfile = cmd.outfile
+
+    systs = []
+    for syst in dc.syst_names:
+        if 'mcstat' in syst: continue
+        if syst in base_cmd.freeze_parameters: continue
+        systs.append(syst)
+    bsvj.logger.info(f'Doing systematics: {" ".join(systs)}')
+
+    # Individual systs
+    cmd = base_cmd.copy()
+    cmd.kwargs['--algo'] = 'impact'
+    cmd.kwargs['--redefineSignalPOIs'] = 'r'
+    cmd.kwargs['--floatOtherPOIs'] = 1
+    cmd.kwargs['--saveInactivePOI'] = 1
+    cmd.kwargs['--robustFit'] = 1
+    cmd.kwargs['--rMin'] = -10.
+    cmd.kwargs['--rMax'] = 10.
+    cmd.kwargs['-t'] = -1
+    cmd.kwargs['--expectSignal'] = 0.2
+    cmd.add_range('shapeBkg_roomultipdf_bsvj__norm', 0.1, 2.0)
+
+    name = '_paramFit_Test_{0}'
+    for syst in systs:
+        if 'bkg_' in syst: continue # Ignore the bkg parameters
+        cmd.name = name.format(syst)
+        cmd.kwargs['-P'] = syst
+        # bsvj.run_combine_command(cmd, logfile=cmd.logfile)
+
+    # Create the impacts.json file
+    combinetool_json_cmd = (
+        f'combineTool.py -M Impacts'
+        f' -d {initial_fit_outfile} -m 120 -o impacts.json'
+        f' --named {",".join(systs)} --redefineSignalPOIs r'
+        )
+    # bsvj.run_command(combinetool_json_cmd)
+
+    # Create the pdf
+    plot_impacts_cmd = (
+        f'plotImpacts.py'
+        f' -i impacts.json --label-size 0.047'
+        f' -o impacts'
+        )
+    # bsvj.run_command(plot_impacts_cmd)
+
+    # Also a version without the bkg parameters
+    systs = [s for s in systs if 'bkgfit' not in s]
+    combinetool_json_cmd = (
+        f'combineTool.py -M Impacts'
+        f' -d {initial_fit_outfile} -m 120 -o impacts_nobkg.json'
+        f' --named {",".join(systs)} --redefineSignalPOIs r'
+        )
+    bsvj.run_command(combinetool_json_cmd)
+
+    plot_impacts_cmd = (
+        f'plotImpacts.py'
+        f' -i impacts_nobkg.json --label-size 0.047'
+        f' -o impacts_nobkg'
+        )
+    bsvj.run_command(plot_impacts_cmd)
 
 
 
@@ -432,7 +626,7 @@ def likelihood_scan_mp():
     Like likelihood_scan, but accepts multiple datacards. 
     """
     datacards = bsvj.pull_arg('datacards', type=str, nargs='+').datacards
-    outdir = bsvj.pull_arg('-o', '--outdir', type=str, default=strftime('scans_%b%d')).outdir
+    outdir = bsvj.pull_arg('-o', '--outdir', type=str, default=strftime('scans_%Y%m%d')).outdir
     if not osp.isdir(outdir): os.makedirs(outdir)
 
     # Copy sys.argv per job, setting first argument to the datacard
@@ -510,6 +704,17 @@ def printws():
         ws = bsvj.get_ws(f, args.workspace)
     ws.Print()
     return ws
+
+
+@scripter
+def remove_fsr():
+    dc_files = bsvj.pull_arg('dcfiles', type=str, nargs='+').dcfiles
+    for dc_file in dc_files:
+        dc = bsvj.Datacard.from_txt(dc_file)
+        dc.systs = [s for s in dc.systs if s[0] != 'fsr']
+        bsvj.logger.info(f'Overwriting {dc_file}')
+        with open(dc_file, 'w') as f:
+            f.write(bsvj.parse_dc(dc))
 
 
 if __name__ == '__main__':
