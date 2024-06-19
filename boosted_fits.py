@@ -389,7 +389,8 @@ class InputDataV2(InputData):
     one signal model parameter variation.
     That way, datacard generation can be made class methods.
     """
-    def __init__(self, jsonfile, mt_min=180., mt_max=720.):
+    #def __init__(self, jsonfile, mt_min=180., mt_max=720.): #old value was 720 now 650
+    def __init__(self, jsonfile, mt_min=180., mt_max=650.):
         self.jsonfile = jsonfile
         with open(jsonfile, 'r') as f:
             self.d = json.load(f, cls=Decoder)
