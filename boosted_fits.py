@@ -762,7 +762,7 @@ def fit_scipy_robust(expression, histogram, cache='auto'):
     # The simple fitting scheme failed; Brute force with many different
     # initial values
     npars = count_parameters(expression)-1 # The mT parameter is not a fit parameter
-    init_val_variations = [-1., 1.] # All the possible init values a single fit parameter can have
+    init_val_variations = [-10.0,-1.0,-0.1,0.1,1.0,10.0] # All the possible init values a single fit parameter can have
     init_vals = np.array(list(itertools.product(*[init_val_variations for i in range(npars)])))
     logger.info(
         'Fit did not converge with single try; brute forcing it with '
@@ -909,6 +909,8 @@ def pdf_expression(pdf_type, npars, mt_scale='1000'):
             expression = 'pow(@0/{0}, @1) * exp(@1*@0/{0}*(1 + @2+ @3*@0/{0} + @4*pow(@0/{0},2)))' #fifth variation            
         if npars == 5:
             expression = 'pow(@0/{0}, @1) * exp(@1*@0/{0}*(1 + @2+ @3*@0/{0} + @4*pow(@0/{0},2) + @5*pow(@0/{0},3)))' #fifth variation
+        if npars == 6:
+            expression = 'pow(@0/{0}, @1) * exp(@1*@0/{0}*(1 + @2+ @3*@0/{0} + @4*pow(@0/{0},2) + @5*pow(@0/{0},3) + @6*pow(@0/{0},4)))' #sixth variation
 
     else:
         raise Exception('Unknown pdf type {0}'.format(pdf_type))
@@ -990,8 +992,17 @@ def pdf_parameters(pdf_type, npars, prefix=None):
                 ROOT.RooRealVar(prefix + "_p1", "p1", 1., -100., 100.),
                 ROOT.RooRealVar(prefix + "_p2", "p2", 1., -100., 100.),
                 ROOT.RooRealVar(prefix + "_p3", "p3", 1., -100., 100.),
-                ROOT.RooRealVar(prefix + "_p4", "p4", 1., -100., 100.),
-                ROOT.RooRealVar(prefix + "_p5", "p5", 1., -100., 100.),
+                ROOT.RooRealVar(prefix + "_p4", "p4", 1., -30., 100.),
+                ROOT.RooRealVar(prefix + "_p5", "p5", 1., -30., 100.),
+                ]
+        elif npars == 6:
+            parameters = [
+                ROOT.RooRealVar(prefix + "_p1", "p1", 1., -100., 100.),
+                ROOT.RooRealVar(prefix + "_p2", "p2", 1., -100., 100.),
+                ROOT.RooRealVar(prefix + "_p3", "p3", 1., -100., 100.),
+                ROOT.RooRealVar(prefix + "_p4", "p4", 1., -30., 100.),
+                ROOT.RooRealVar(prefix + "_p5", "p5", 1., -30., 100.),
+                ROOT.RooRealVar(prefix + "_p6", "p6", 1., -30., 100.),
                 ]
     object_keeper.add_multiple(parameters)    
     return parameters
@@ -1088,7 +1099,7 @@ def pdfs_factory(pdf_type, mt, bkg_th1, name=None, mt_scale='1000', trigeff=None
     Like pdf_factory, but returns a list for all available n_pars
     """
     if name is None: name = uid()
-    all_n_pars = [2, 3, 4] if pdf_type == 'alt' else [2, 3, 4, 5]
+    all_n_pars = [2, 3, 4] if pdf_type == 'alt' else [2, 3, 4, 5, 6]
     if npars is not None: all_n_pars = [npars]
     return [ pdf_factory(pdf_type, n_pars, mt, bkg_th1, name+'_npars'+str(n_pars), mt_scale, trigeff=trigeff) for n_pars in all_n_pars]
 
