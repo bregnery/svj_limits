@@ -14,7 +14,10 @@ import boosted_fits as bsvj
 logger = bsvj.setup_logger('quickplot')
 
 import numpy as np
+import matplotlib
+matplotlib.use('Agg') # prevents opening displays (fast), must use before pyplot
 import matplotlib.pyplot as plt # type:ignore
+
 
 def set_mpl_fontsize(small=22, medium=28, large=32, legend=None):
     plt.rc('font', size=small)          # controls default text sizes
@@ -947,7 +950,7 @@ def bkgfitv2():
     np.testing.assert_almost_equal(y_pdf_eval, pdf.evaluate(bin_centers), decimal=2)
 
     # Do the fisher test and mark the winner pdf
-    winner = bsvj.do_fisher_test(mt, data_datahist, pdfs)
+    winner = bsvj.do_fisher_test(mt, data_datahist, pdfs, 0.1)
     pdfs[winner].is_winner = True
 
     bkg_hist.vals = np.array(bkg_hist.vals)
